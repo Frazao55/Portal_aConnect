@@ -10,19 +10,18 @@
   <canvas id="particles"></canvas>
 
   <main class="app">
-    <h1>Mia</h1>
-    <p class="subtitle">A Conquista do Futuro: Pessoas, Cultura, IA</p>
-
-    <!-- ESTADO: Entrada -->
-    <div id="screen-entry">
-      <div class="entry-stage">
-        <div class="entry-glow"></div>
-        <div class="entry-rings">
-          <div></div>
-          <div></div>
+    <!-- ESTADO: Pré-visualização (ecrã inicial) -->
+    <div id="screen-preview">
+      <video id="mia-preview" src="/videos/Mia_aConquista.mp4" muted playsinline preload="auto"></video>
+      <video id="camera-preview" autoplay muted playsinline class="camera-pip"></video>
+      <div class="preview-overlay">
+        <p class="preview-text" id="preview-status">Olha para a câmera</p>
+        <button id="btn-start-conversation" class="btn-primary">Iniciar conversa</button>
+        <div id="preview-loading" class="preview-loading hidden">
+          <div class="preview-spinner"></div>
+          <span>A analisar...</span>
         </div>
       </div>
-      <button id="btn-enter" class="btn-enter">Entrar</button>
     </div>
 
     <!-- ESTADO: Loading -->

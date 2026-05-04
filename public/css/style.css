@@ -151,6 +151,113 @@ h1::after {
   box-shadow: 0 4px 16px rgba(220, 38, 38, 0.25);
 }
 
+/* ── Pré-visualização (ecrã inicial = ecrã conversa) ─────────── */
+
+#screen-preview {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 10;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+#screen-preview.hidden {
+  display: none !important;
+}
+
+#screen-preview video {
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 9 / 16;
+  object-fit: cover;
+  opacity: 0.35;
+  transition: opacity 0.5s ease;
+}
+
+.camera-pip {
+  position: absolute;
+  bottom: 140px;
+  right: 24px;
+  width: 160px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.65);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  background: #111;
+  z-index: 3;
+  transform: scaleX(-1); /* espelhar como espelho */
+}
+
+.preview-overlay {
+  position: absolute;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 32px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.preview-text {
+  font-size: 1.15rem;
+  color: #fff;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-align: center;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+  transition: opacity 0.3s ease;
+}
+
+.preview-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 500;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+.preview-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Estado durante análise - escurecer vídeo */
+#screen-preview.analyzing #mia-preview {
+  opacity: 0.2;
+  transition: opacity 0.5s ease;
+}
+
+/* Esconder overlay durante transição para interview */
+#screen-preview.interviewing .preview-overlay,
+#screen-preview.analyzing .preview-overlay {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+}
+
 /* ── Loading ─────────────────────────────────────────────────── */
 
 .loading-stage {

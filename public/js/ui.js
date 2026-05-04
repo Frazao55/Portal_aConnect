@@ -1,7 +1,7 @@
 // ui.js — Gestão da interface e log
 
 const screens = {
-  entry: document.getElementById("screen-entry"),
+  preview: document.getElementById("screen-preview"),
   loading: document.getElementById("screen-loading"),
   welcome: document.getElementById("screen-welcome"),
   register: document.getElementById("screen-register"),
@@ -18,7 +18,9 @@ const els = {
   log: document.getElementById("log"),
   registerPhoto: document.getElementById("register-photo"),
   registerName: document.getElementById("register-name"),
-  particles: document.getElementById("particles")
+  particles: document.getElementById("particles"),
+  miaPreview: document.getElementById("mia-preview"),
+  cameraPreview: document.getElementById("camera-preview")
 };
 
 const miaVideo = document.getElementById("mia-video");
@@ -34,6 +36,11 @@ export function showScreen(name) {
   if (name !== "interview") {
     miaVideo?.pause();
     delete document.body.dataset.miaPresence;
+  }
+
+  if (name === "preview" && els.miaPreview) {
+    els.miaPreview.currentTime = 0;
+    els.miaPreview.pause();
   }
 }
 
@@ -188,9 +195,53 @@ export function stopParticles() {
 // ── Botões ─────────────────────────────────────────────────────
 
 export const buttons = {
-  enter: document.getElementById("btn-enter"),
+  startConversation: document.getElementById("btn-start-conversation"),
   register: document.getElementById("btn-register"),
   cancelRegister: document.getElementById("btn-cancel-register"),
   stopInterview: document.getElementById("btn-stop-interview"),
   restart: document.getElementById("btn-restart")
 };
+
+export function setCameraPreviewStream(stream) {
+  if (els.cameraPreview) {
+    els.cameraPreview.srcObject = stream;
+  }
+}
+
+// ── Preview overlay state ──────────────────────────────────────
+
+export function setPreviewAnalyzing(analyzing) {
+  const previewScreen = document.getElementById("screen-preview");
+  const btn = document.getElementById("btn-start-conversation");
+  const status = document.getElementById("preview-status");
+  const loading = document.getElementById("preview-loading");
+
+  if (!previewScreen || !btn || !status || !loading) return;
+
+  if (analyzing) {
+    previewScreen.classList.add("analyzing");
+    btn.classList.add("hidden");
+    status.classList.add("hidden");
+    loading.classList.remove("hidden");
+  } else {
+    previewScreen.classList.remove("analyzing");
+    btn.classList.remove("hidden");
+    status.classList.remove("hidden");
+    loading.classList.add("hidden");
+  }
+}
+
+export function hidePreviewOverlay() {
+  const previewScreen = document.getElementById("screen-preview");
+  if (previewScreen) {
+    previewScreen.classList.add("interviewing");
+  }
+}
+
+export function showPreviewOverlay() {
+  const previewScreen = document.getElementById("screen-preview");
+  if (previewScreen) {
+    previewScreen.classList.remove("interviewing");
+    previewScreen.classList.remove("analyzing");
+  }
+}

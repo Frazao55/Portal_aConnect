@@ -48,9 +48,13 @@ export async function startCamera() {
   return new Promise((resolve) => {
     video.onloadedmetadata = () => {
       video.play();
-      resolve();
+      resolve(cameraStream);
     };
   });
+}
+
+export function getCameraStream() {
+  return cameraStream;
 }
 
 export function stopCamera() {

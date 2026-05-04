@@ -3,13 +3,16 @@
 import {
   showScreen, setWelcomeName, setDoneName,
   setRegisterPhoto, getRegisterName, clearRegisterName,
-  log, clearLog, buttons, startParticles, stopParticles
+  log, clearLog, buttons, startParticles, stopParticles,
+  setCameraPreviewStream, setMiaPresence,
+  setPreviewAnalyzing, hidePreviewOverlay, showPreviewOverlay
 } from "./ui.js";
 
 import {
   loadModels, loadRegisteredFaces, startCamera, stopCamera,
   startDetection, stopDetection, registerFace,
-  getCurrentDescriptor, getCurrentPhoto, getFaceCount
+  getCurrentDescriptor, getCurrentPhoto, getFaceCount,
+  getCameraStream
 } from "./faceRecognition.js";
 
 import {
@@ -22,7 +25,7 @@ function firstName(fullName) {
 }
 
 // ── Estado ──────────────────────────────────────────────────────
-let state = "entry";
+let state = "preview";
 let currentUser = null;
 let currentDescriptor = null;
 let currentPhoto = null;
@@ -36,7 +39,7 @@ function init() {
   log("App inicializada.", "system");
   startParticles();
 
-  buttons.enter.addEventListener("click", onEnter);
+  buttons.startConversation.addEventListener("click", onStartConversation);
   buttons.register.addEventListener("click", onRegisterFace);
   buttons.cancelRegister.addEventListener("click", onCancelRegister);
   buttons.stopInterview.addEventListener("click", onStopInterview);
@@ -47,23 +50,41 @@ function init() {
     stopInterview();
     stopParticles();
   });
+
+  // Iniciar diretamente no preview
+  startPreview();
 }
 
-// ── Fluxo: Entrada → Pipeline ───────────────────────────────────
-async function onEnter() {
-  setState("loading");
+// ── Fluxo: Preview inicial ──────────────────────────────────────
+async function startPreview() {
+  setState("preview");
   clearLog();
-  log("A iniciar pipeline...", "system");
+  log("A iniciar preview...", "system");
 
   try {
-    await loadModels();
-    log("Modelos carregados.", "system");
-
-    await loadRegisteredFaces();
-
-    await startCamera();
+    const stream = await startCamera();
+    setCameraPreviewStream(stream);
     log("Câmara iniciada.", "system");
 
+    // Carregar modelos e rostos em background
+    Promise.all([loadModels(), loadRegisteredFaces()])
+      .then(() => log("Modelos e rostos carregados.", "system"))
+      .catch(err => log(`Erro ao carregar modelos: ${err.message}`, "error"));
+  } catch (err) {
+    log(`Erro: ${err.message}`, "error");
+    stopCamera();
+    setState("preview");
+  }
+}
+
+async function onStartConversation() {
+  if (state !== "preview") return;
+
+  state = "analyzing";
+  setPreviewAnalyzing(true);
+  log("A iniciar reconhecimento facial...", "system");
+
+  try {
     startDetection(
       (match) => onFaceRecognized(match),
       () => { /* sem feedback visual */ }
@@ -71,13 +92,14 @@ async function onEnter() {
   } catch (err) {
     log(`Erro: ${err.message}`, "error");
     stopCamera();
-    setState("entry");
+    state = "preview";
+    setPreviewAnalyzing(false);
   }
 }
 
 // ── Reconhecimento ──────────────────────────────────────────────
 function onFaceRecognized(match) {
-  if (state !== "loading") return;
+  if (state !== "analyzing") return;
 
   currentDescriptor = getCurrentDescriptor();
   currentPhoto = getCurrentPhoto();
@@ -89,12 +111,12 @@ function onFaceRecognized(match) {
       log("Face detetada, não reconhecida. Pedir nome.", "system");
       setRegisterPhoto(currentPhoto);
       clearRegisterName();
+      setPreviewAnalyzing(false);
       setState("register");
       return;
     }
 
     log("Face detetada sem dados suficientes.", "error");
-    setState("loading");
     startDetection(
       (nextMatch) => onFaceRecognized(nextMatch),
       () => {}
@@ -108,14 +130,14 @@ function onFaceRecognized(match) {
   };
 
   log(`Utilizador reconhecido: ${match.label} (dist=${match.distance.toFixed(3)})`, "system");
-  setWelcomeName(currentUser.name);
-  setState("welcome");
-
-  // Auto-avançar para entrevista após 3s
-  if (welcomeTimeout) clearTimeout(welcomeTimeout);
-  welcomeTimeout = setTimeout(() => {
+  
+  // Transição suave: esconder overlay do preview
+  hidePreviewOverlay();
+  
+  // Pequeno delay para a transição visual antes de iniciar a conversa
+  setTimeout(() => {
     onStartInterview();
-  }, 3000);
+  }, 500);
 }
 
 // ── Registo ─────────────────────────────────────────────────────
@@ -141,13 +163,7 @@ async function onRegisterFace() {
       name: firstName(user.name)
     };
 
-    setWelcomeName(currentUser.name);
-    setState("welcome");
-
-    if (welcomeTimeout) clearTimeout(welcomeTimeout);
-    welcomeTimeout = setTimeout(() => {
-      onStartInterview();
-    }, 3000);
+    onStartInterview();
   } catch (err) {
     log(`Erro no registo: ${err.message}`, "error");
   }
@@ -156,7 +172,8 @@ async function onRegisterFace() {
 function onCancelRegister() {
   currentDescriptor = null;
   currentPhoto = null;
-  setState("loading");
+  setPreviewAnalyzing(true);
+  state = "analyzing";
   startDetection(
     (match) => onFaceRecognized(match),
     () => {}
@@ -175,6 +192,7 @@ async function onStartInterview() {
   stopDetection();
   stopCamera();
   setState("interview");
+  setMiaPresence("connecting");
   interviewStartTime = Date.now();
   log(`A Mia vai falar com ${currentUser.name}...`, "system");
 
@@ -187,7 +205,7 @@ async function onStartInterview() {
     );
   } catch (err) {
     log(`Erro ao iniciar conversa: ${err.message}`, "error");
-    setState("entry");
+    setState("preview");
   }
 }
 
@@ -198,7 +216,8 @@ function onStopInterview() {
   currentDescriptor = null;
   currentPhoto = null;
   currentFaceCount = 0;
-  setState("entry");
+  showPreviewOverlay();
+  setState("preview");
 }
 
 async function onInterviewComplete(result) {
@@ -251,7 +270,8 @@ function onInterviewError(err) {
   currentDescriptor = null;
   currentPhoto = null;
   currentFaceCount = 0;
-  setState("entry");
+  showPreviewOverlay();
+  setState("preview");
 }
 
 // ── Reiniciar ───────────────────────────────────────────────────
@@ -263,7 +283,8 @@ function onRestart() {
   if (welcomeTimeout) clearTimeout(welcomeTimeout);
   stopCamera();
   stopInterview();
-  setState("entry");
+  showPreviewOverlay();
+  setState("preview");
   clearLog();
   log("Pronto para nova conversa.", "system");
 }
@@ -274,22 +295,28 @@ function setState(newState) {
   showScreen(newState);
 
   switch (newState) {
-    case "entry":
-      stopCamera();
-      break;
-
-    case "loading":
-      // Tudo gerido pelo pipeline; sem feedback textual
-      break;
-
-    case "welcome":
-      // Auto-avança via setTimeout em onFaceRecognized
+    case "preview":
+      // Vídeo da Mia parado no frame inicial
+      {
+        const previewVideo = document.getElementById("mia-preview");
+        if (previewVideo) {
+          previewVideo.currentTime = 0;
+          previewVideo.pause();
+        }
+      }
       break;
 
     case "register":
       break;
 
     case "interview":
+      // Sincronizar vídeo da Mia no frame inicial para transição suave
+      {
+        const interviewVideo = document.getElementById("mia-video");
+        if (interviewVideo) {
+          interviewVideo.currentTime = 0;
+        }
+      }
       break;
 
     case "done":
