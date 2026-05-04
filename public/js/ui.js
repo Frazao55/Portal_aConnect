@@ -21,12 +21,20 @@ const els = {
   particles: document.getElementById("particles")
 };
 
+const miaVideo = document.getElementById("mia-video");
+const statusEl = document.getElementById("interview-status");
+
 const debugEnabled = new URLSearchParams(window.location.search).get("debug") === "1";
 document.body.dataset.debug = debugEnabled ? "true" : "false";
 
 export function showScreen(name) {
   Object.values(screens).forEach(s => s.classList.add("hidden"));
   if (screens[name]) screens[name].classList.remove("hidden");
+
+  if (name !== "interview") {
+    miaVideo?.pause();
+    delete document.body.dataset.miaPresence;
+  }
 }
 
 export function setWelcomeName(name) {
@@ -37,9 +45,32 @@ export function setDoneName(name) {
   els.doneName.textContent = name;
 }
 
+const STATUS_TEXT = {
+  connecting: "A ligar...",
+  thinking: "A pensar...",
+  listening: "Podes falar...",
+  speaking: "Mia est\u00e1 a falar",
+  idle: ""
+};
+
 export function setMiaPresence(state) {
   if (els.miaStage) {
     els.miaStage.dataset.presence = state;
+  }
+
+  document.body.dataset.miaPresence = state;
+
+  if (statusEl) {
+    statusEl.textContent = STATUS_TEXT[state] || "";
+  }
+
+  if (!miaVideo) return;
+
+  if (state === "speaking") {
+    miaVideo.currentTime = 0;
+    miaVideo.play().catch(() => {});
+  } else {
+    miaVideo.pause();
   }
 }
 

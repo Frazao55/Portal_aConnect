@@ -271,6 +271,7 @@ function markAssistantOutputStopped(reason = "audio_buffer_stopped") {
   }
   assistantResponseInProgress = false;
   assistantAudioStarted = false;
+  setLocalAudioEnabled(true);
   setMiaPresence("listening");
   markInternalDecision("assistant_output_stopped", { reason });
   if (nextAssistantStep === "close" && canFinishInterview(interviewState)) {
@@ -301,6 +302,13 @@ function sendEvent(event) {
   if (dc && dc.readyState === "open") {
     dc.send(JSON.stringify(event));
   }
+}
+
+function setLocalAudioEnabled(enabled) {
+  if (!localStream) return;
+  localStream.getAudioTracks().forEach((track) => {
+    track.enabled = enabled;
+  });
 }
 
 function buildSubmitInterviewTool() {
@@ -433,8 +441,7 @@ function wantsToSkipSmallTalk(text) {
   const normalized = normalizeText(text);
   return hasAny(normalized, [
     "avancar", "avanca", "vamos ao que interessa", "sem conversa",
-    "nao tenho tempo", "tenho pressa", "vamos comecar", "salta",
-    "podes comecar", "perguntas", "pergunta"
+    "nao tenho tempo", "tenho pressa", "salta"
   ]);
 }
 
@@ -496,8 +503,39 @@ function setGoalAsUnspecified(goal, state) {
   });
 }
 
+function polishAcceptedValue(goal, value) {
+  const cleanValue = (value || "").trim();
+  const normalized = normalizeText(cleanValue);
+
+  if (goal === "problemas") {
+    if (
+      normalized === "mandar mails" ||
+      normalized === "mandar emails" ||
+      normalized === "enviar mails" ||
+      normalized === "enviar emails"
+    ) {
+      return "automatizar ou apoiar o envio de emails";
+    }
+    if (normalized.includes("mail") || normalized.includes("email")) {
+      return cleanValue
+        .replace(/\bmandar mails?\b/gi, "automatizar ou apoiar o envio de emails")
+        .replace(/\benviar emails?\b/gi, "automatizar ou apoiar o envio de emails")
+        .replace(/\be-mails?\b/gi, "emails");
+    }
+  }
+
+  if (goal === "visao_futuro") {
+    return cleanValue
+      .replace(/\bcomandar tudo\b/gi, "coordenar processos")
+      .replace(/\bcomandar processos\b/gi, "coordenar processos")
+      .replace(/\bcoisas chatas\b/gi, "tarefas repetitivas ou administrativas");
+  }
+
+  return cleanValue;
+}
+
 function acceptField(goal, value, state, raw = "") {
-  const cleanValue = (value || "").trim() || "não especificado";
+  const cleanValue = polishAcceptedValue(goal, value) || "não especificado";
   state[goal] = cleanValue;
   state.attempts_per_goal[goal] = 0;
   markInternalDecision(`accepted_${goal}`, {
@@ -533,7 +571,7 @@ function processUserTranscript(text) {
   }
 
   if (nextAssistantStep === "greeting") {
-    if (wantsToSkipSmallTalk(text) || looksLikeAmbiente(text)) {
+    if (wantsToSkipSmallTalk(text)) {
       interviewState.warmup_done = true;
       interviewState.current_goal = "problemas";
       markInternalDecision("quebra_gelo_skipped", { text: text || "<vazio>" });
@@ -619,9 +657,15 @@ function buildAssessmentPrompt(goal, userText) {
     "Para problemas, avalia se a resposta identifica um problema, tarefa ou processo que a IA poderia resolver ou automatizar.",
     "Para visao_futuro, avalia se a resposta descreve uma expectativa para o futuro da IA na Arentia, mesmo que mencione o problema anterior.",
     "Se a resposta for curta mas útil no contexto, como 'marcações' para problema, aceita.",
-    "normalized_value deve ser uma síntese curta e limpa, nunca uma transcrição quebrada.",
+    "normalized_value deve ser uma síntese curta, limpa e útil para análise posterior; nunca uma transcrição literal quebrada.",
+    "Usa linguagem profissional e suave: prefere 'apoiar', 'coordenar', 'automatizar', 'simplificar' e 'libertar equipas'.",
+    "Evita termos fortes como 'comandar tudo' ou 'substituir pessoas', salvo se forem essenciais; quando possível, suaviza para 'coordenar processos' ou 'automatizar tarefas repetitivas'.",
+    "Troca expressões vagas como 'coisas chatas' por 'tarefas repetitivas ou administrativas'.",
     "Exemplos de normalização:",
     "- 'Eu responderam eles por mim' => 'responder mensagens ou pedidos pela pessoa'",
+    "- 'mandar mails' => 'automatizar ou apoiar o envio de emails'",
+    "- 'a comandar tudo' => 'coordenar processos e automatizar tarefas repetitivas'",
+    "- 'automatizar coisas chatas' => 'automatizar tarefas repetitivas ou administrativas'",
     "- 'OK, como é que eu penso que ela vai funcionar?' => accepted=false, answer_type=question_back",
     "clarifying_question deve ser curta, oral e adequada ao tipo de resposta."
   ].join("\n").trim();
@@ -852,8 +896,9 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
       "OBJETIVO ATUAL: PRIMEIRA PERGUNTA PRINCIPAL, PROBLEMA CONCRETO.",
       decision?.reason === "social_done" || decision?.reason === "skip_small_talk"
-        ? "Começa com uma transição curta do quebra-gelo para a primeira pergunta principal."
+        ? "Começa com uma transição curta e neutra do quebra-gelo para a primeira pergunta principal. Se a pessoa trouxe um tema lateral, não alimentes esse tema."
         : "Se a resposta anterior já trouxe contexto útil, reconhece-o numa frase curta antes de perguntar.",
+      "Para off-topic, usa algo como: \"Boa, guardamos isso para depois. Agora vou puxar-te para a primeira pergunta.\"",
       "Pergunta de forma independente que problema, tarefa ou processo do dia a dia da Arentia a IA poderia ajudar a resolver ou automatizar.",
       isGroup
         ? "Pergunta: \"No vosso dia a dia na Arentia, que problema, tarefa ou processo gostavam que a IA ajudasse a resolver ou automatizar?\""
@@ -871,6 +916,7 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
       "OBJETIVO ATUAL: SEGUNDA PERGUNTA PRINCIPAL, VISÃO DE FUTURO DA ARENTIA.",
       "Faz uma transição curta: reconhece o problema registado, mas deixa claro que agora a pergunta é mais ampla.",
+      "Usa a versão normalizada do problema, não a transcrição bruta.",
       "Pergunta como a pessoa imagina a IA no futuro da Arentia: nas equipas, nos processos ou na forma de trabalhar.",
       `Exemplo: "Boa. Agora olhando para a Arentia daqui a uns anos: como imaginas que a IA pode ajudar as equipas, os processos ou a forma de trabalhar?"`,
       "A resposta deve capturar uma visão ou expectativa para a Arentia, não apenas para o problema anterior.",
@@ -926,7 +972,8 @@ visao_futuro: ${state.visao_futuro || "não especificado"}`,
     "Não chames nenhuma função.",
     "Faz um fecho curto, caloroso e com mini-resumo do que ficou registado.",
     "No fecho, resume só o problema e a visão de futuro. Não menciones o campo ambiente nem digas que ficou não especificado.",
-    "Exemplo de tom: \"Boa, Diogo. Fica registado: IA a ajudar com marcações por email no fim do dia, com contexto suficiente para não te interromper. Obrigado por deixares a tua marca.\"",
+    "Se algum valor vier com linguagem forte, suaviza no resumo: 'comandar processos' deve soar como 'coordenar processos'.",
+    "Exemplo de tom: \"Boa, Diogo. Fica registado: IA a apoiar o envio de emails e, no futuro da Arentia, a coordenar processos e automatizar tarefas repetitivas para libertar as equipas. Obrigado por deixares a tua marca.\"",
     "Não termines só com 'Obrigado, ficou registado'."
   ].join("\n").trim();
 }
@@ -934,6 +981,7 @@ visao_futuro: ${state.visao_futuro || "não especificado"}`,
 function sendAssessmentRequest(goal, userText = "") {
   if (!dc || dc.readyState !== "open") return;
 
+  setLocalAudioEnabled(false);
   awaitingAssessment = true;
   pendingAssessmentArgs = null;
   pendingAssessmentInput = { goal, userText };
@@ -958,6 +1006,7 @@ function sendAssessmentRequest(goal, userText = "") {
 function sendAssistantResponse(step, userText = "", decision = null) {
   if (!dc || dc.readyState !== "open") return;
 
+  setLocalAudioEnabled(false);
   awaitingAssessment = false;
   nextAssistantStep = step;
   assistantResponseInProgress = true;
@@ -1036,6 +1085,7 @@ function handleRealtimeMessage(event) {
 
     if (msg.type === "output_audio_buffer.started") {
       assistantAudioStarted = true;
+      setLocalAudioEnabled(false);
       setMiaPresence("speaking");
       return;
     }
@@ -1046,7 +1096,11 @@ function handleRealtimeMessage(event) {
     }
 
     if (msg.type === "output_audio_buffer.cleared") {
-      markAssistantOutputStopped("output_audio_buffer_cleared");
+      markInternalDecision("assistant_output_cleared_ignored", {
+        nextAssistantStep,
+        assistantResponseInProgress,
+        assistantAudioStarted
+      });
       return;
     }
 
@@ -1165,6 +1219,7 @@ function handleRealtimeMessage(event) {
           }
         }
         if (wasAwaitingAssessment && item.type === "function_call" && item.name === "assess_interview_answer") {
+          if (pendingAssessmentArgs) continue;
           try {
             const args = JSON.parse(item.arguments || "{}");
             log(`Avaliação semântica (via response.done): ${JSON.stringify(args)}`, "system");

@@ -16,6 +16,11 @@ import {
   startInterview, stopInterview, getTranscript
 } from "./openaiRealtime.js";
 
+function firstName(fullName) {
+  if (!fullName) return "";
+  return fullName.trim().split(/\s+/)[0];
+}
+
 // ── Estado ──────────────────────────────────────────────────────
 let state = "entry";
 let currentUser = null;
@@ -99,11 +104,11 @@ function onFaceRecognized(match) {
 
   currentUser = {
     id: match.userId,
-    name: match.label
+    name: firstName(match.label)
   };
 
   log(`Utilizador reconhecido: ${match.label} (dist=${match.distance.toFixed(3)})`, "system");
-  setWelcomeName(match.label);
+  setWelcomeName(currentUser.name);
   setState("welcome");
 
   // Auto-avançar para entrevista após 3s
@@ -129,10 +134,14 @@ async function onRegisterFace() {
   try {
     log(`A registar ${name}...`, "system");
     const user = await registerFace(name, currentDescriptor, currentPhoto);
-    currentUser = user;
     log(`Registado: ${user.name}`, "system");
 
-    setWelcomeName(user.name);
+    currentUser = {
+      id: user.id,
+      name: firstName(user.name)
+    };
+
+    setWelcomeName(currentUser.name);
     setState("welcome");
 
     if (welcomeTimeout) clearTimeout(welcomeTimeout);

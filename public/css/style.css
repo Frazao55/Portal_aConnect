@@ -25,7 +25,7 @@ body {
 
 .app {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   width: 100%;
   max-width: 800px;
   display: flex;
@@ -344,62 +344,73 @@ button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
 /* ── Conversa / Mia Stage ────────────────────────────────────── */
 
-.mia-stage {
-  min-height: 340px;
-  display: grid;
-  place-items: center;
-  margin: 12px auto 16px;
-  position: relative;
-  isolation: isolate;
+/* ── Ecrã de Conversa ─────────────────────────────────────────── */
+
+#screen-interview {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 10;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
-.mia-stage::before {
+#screen-interview video {
+  height: 100%;
+  max-width: 100%;
+  aspect-ratio: 9 / 16;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+body[data-mia-presence="speaking"] #screen-interview video,
+body[data-mia-presence="listening"] #screen-interview video {
+  opacity: 1;
+}
+
+body[data-mia-presence="connecting"] #screen-interview video,
+body[data-mia-presence="thinking"] #screen-interview video {
+  opacity: 0.35;
+}
+
+body[data-mia-presence="speaking"] #screen-interview video {
+  box-shadow: inset 0 0 0 6px rgba(220, 38, 38, 0.4);
+  animation: speakRingVideo 1.4s ease-in-out infinite;
+}
+
+#screen-interview::after {
   content: "";
   position: absolute;
-  width: min(72vw, 420px);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(220, 38, 38, 0.08), transparent 62%);
-  opacity: 0;
-  transform: scale(0.84);
-  transition: opacity 0.7s ease, transform 0.7s ease;
-  z-index: -1;
-}
-
-.mia-stage[data-presence="thinking"]::before,
-.mia-stage[data-presence="speaking"]::before {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.mia-avatar {
-  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 35%;
+  background: linear-gradient(to top, rgba(0,0,0,0.75) 0%, transparent 100%);
   z-index: 2;
-  width: min(48vw, 220px);
-  height: min(48vw, 220px);
-  border-radius: 50%;
-  overflow: hidden;
-  opacity: 0;
-  transform: scale(0.85);
-  transition: opacity 0.7s ease, transform 0.7s cubic-bezier(.2,.8,.2,1);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
   pointer-events: none;
 }
 
-.mia-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+@keyframes speakRingVideo {
+  0%, 100% { box-shadow: inset 0 0 0 6px rgba(220, 38, 38, 0.4); }
+  50%      { box-shadow: inset 0 0 0 18px rgba(220, 38, 38, 0.08); }
 }
 
-.mia-stage[data-presence="speaking"] .mia-avatar,
-.mia-stage[data-presence="listening"] .mia-avatar {
-  opacity: 1;
-  transform: scale(1);
+.mia-stage {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  pointer-events: none;
 }
 
 .voice-orb {
-  width: min(56vw, 240px);
+  width: 64px;
   aspect-ratio: 1;
   border-radius: 50%;
   position: relative;
@@ -409,8 +420,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
     radial-gradient(circle at 35% 28%, rgba(255,255,255,0.85), transparent 0 14%, transparent 15%),
     radial-gradient(circle at 50% 50%, #dc2626 0 38%, #991b1b 56%, #7f1d1d 100%);
   box-shadow:
-    0 0 55px rgba(220, 38, 38, 0.22),
-    0 0 120px rgba(153, 27, 27, 0.16);
+    0 0 30px rgba(220, 38, 38, 0.28),
+    0 0 70px rgba(153, 27, 27, 0.18);
   animation: orbPulse 2.2s ease-in-out infinite;
   opacity: 0;
   transform: scale(0.72);
@@ -459,17 +470,17 @@ button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 }
 
 .voice-orb span {
-  width: 10px;
-  height: 72px;
+  width: 4px;
+  height: 20px;
   border-radius: 999px;
   background: rgba(255,255,255,0.85);
-  margin: 0 5px;
+  margin: 0 2px;
   display: inline-block;
   animation: barTalk 0.92s ease-in-out infinite;
 }
 
 .voice-orb span:nth-child(2) {
-  height: 110px;
+  height: 32px;
   animation-delay: 0.18s;
 }
 
@@ -493,17 +504,26 @@ button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 }
 
 .interview-footer {
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 20px;
-  margin-top: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(10px);
+  padding: 10px 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.1);
 }
 
 .interview-timer {
   font-variant-numeric: tabular-nums;
   font-size: 0.85rem;
-  color: #999;
+  color: rgba(255, 255, 255, 0.85);
   letter-spacing: 0.04em;
 }
 
@@ -581,3 +601,33 @@ body:not([data-debug="true"]) .log-container {
 .log-container .role-user { color: #fca5a5; }
 .log-container .role-system { color: #666; }
 .log-container .role-error { color: #ef4444; }
+
+/* ── Barras congeladas (speaking = não fales) ─────────────────── */
+
+.mia-stage[data-presence="speaking"] .voice-orb span {
+  animation-play-state: paused;
+  opacity: 0.45;
+}
+
+/* ── Barra de estado ──────────────────────────────────────────── */
+
+.interview-status {
+  position: absolute;
+  bottom: 122px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  min-height: 24px;
+  transition: color 0.3s ease;
+  pointer-events: none;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+}
+
+body[data-mia-presence="speaking"] .interview-status {
+  color: #ff6b6b;
+  font-weight: 500;
+}

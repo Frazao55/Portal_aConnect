@@ -59,16 +59,15 @@
 
     <!-- ESTADO: Conversa -->
     <div id="screen-interview" class="hidden">
+      <video id="mia-video" src="/videos/Mia_aConquista.mp4" muted loop playsinline preload="auto"></video>
       <div id="mia-stage" class="mia-stage" data-presence="connecting">
-        <div class="mia-avatar">
-          <img src="/images/mia.png" alt="Mia" />
-        </div>
         <div class="voice-orb">
           <span></span>
           <span></span>
           <span></span>
         </div>
       </div>
+      <div class="interview-status" id="interview-status"></div>
       <div class="interview-footer">
         <div class="interview-timer" id="interview-timer">00:00</div>
         <button id="btn-stop-interview" class="btn-ghost">Parar</button>
