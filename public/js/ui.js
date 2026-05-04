@@ -1,28 +1,24 @@
 // ui.js — Gestão da interface e log
 
 const screens = {
-  idle: document.getElementById("screen-idle"),
-  identifying: document.getElementById("screen-identifying"),
-  recognized: document.getElementById("screen-recognized"),
+  entry: document.getElementById("screen-entry"),
+  loading: document.getElementById("screen-loading"),
+  welcome: document.getElementById("screen-welcome"),
   register: document.getElementById("screen-register"),
   interview: document.getElementById("screen-interview"),
   done: document.getElementById("screen-done")
 };
 
 const els = {
-  videoContainer: document.getElementById("video-container"),
   video: document.getElementById("camera"),
-  facePill: document.getElementById("face-pill"),
-  statePill: document.getElementById("state-pill"),
-  statusText: document.getElementById("status-text"),
-  recognizedName: document.getElementById("recognized-name"),
-  interviewStatus: document.getElementById("interview-status"),
+  welcomeName: document.getElementById("welcome-name"),
+  doneName: document.getElementById("done-name"),
   interviewTimer: document.getElementById("interview-timer"),
   miaStage: document.getElementById("mia-stage"),
-  miaPresenceText: document.getElementById("mia-presence-text"),
   log: document.getElementById("log"),
   registerPhoto: document.getElementById("register-photo"),
-  registerName: document.getElementById("register-name")
+  registerName: document.getElementById("register-name"),
+  particles: document.getElementById("particles")
 };
 
 const debugEnabled = new URLSearchParams(window.location.search).get("debug") === "1";
@@ -33,43 +29,17 @@ export function showScreen(name) {
   if (screens[name]) screens[name].classList.remove("hidden");
 }
 
-export function showVideo() {
-  els.videoContainer.classList.remove("hidden");
+export function setWelcomeName(name) {
+  els.welcomeName.textContent = name;
 }
 
-export function hideVideo() {
-  els.videoContainer.classList.add("hidden");
+export function setDoneName(name) {
+  els.doneName.textContent = name;
 }
 
-export function setFacePill(text, type = "") {
-  els.facePill.textContent = text;
-  els.facePill.className = "pill " + type;
-}
-
-export function setStatePill(text, type = "info") {
-  els.statePill.textContent = text;
-  els.statePill.className = "pill " + type;
-}
-
-export function setStatus(text) {
-  els.statusText.textContent = text;
-}
-
-export function setRecognizedName(name) {
-  els.recognizedName.textContent = name;
-}
-
-export function setInterviewStatus(text) {
-  els.interviewStatus.textContent = text;
-}
-
-export function setMiaPresence(state, text = "") {
+export function setMiaPresence(state) {
   if (els.miaStage) {
     els.miaStage.dataset.presence = state;
-  }
-
-  if (els.miaPresenceText && text) {
-    els.miaPresenceText.textContent = text;
   }
 }
 
@@ -116,11 +86,78 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-// Botões exportados para app.js ligar eventos
+// ── Partículas ─────────────────────────────────────────────────
+
+let particlesActive = false;
+let particlesAnimId = null;
+
+export function startParticles() {
+  if (particlesActive) return;
+  particlesActive = true;
+
+  const canvas = els.particles;
+  const ctx = canvas.getContext("2d");
+  const dots = [];
+  const count = 50;
+
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener("resize", resize);
+
+  for (let i = 0; i < count; i++) {
+    dots.push({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: Math.random() * 1.6 + 0.4,
+      vx: (Math.random() - 0.5) * 0.25,
+      vy: -Math.random() * 0.5 - 0.15,
+      alpha: Math.random() * 0.5 + 0.25,
+      pulse: Math.random() * Math.PI * 2,
+      color: Math.random() < 0.35 ? "239, 68, 68" : "100, 100, 100"
+    });
+  }
+
+  function draw() {
+    if (!particlesActive) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for (const d of dots) {
+      d.x += d.vx;
+      d.y += d.vy;
+      d.pulse += 0.015;
+
+      if (d.y < -10) { d.y = canvas.height + 10; d.x = Math.random() * canvas.width; }
+      if (d.x < -10) d.x = canvas.width + 10;
+      if (d.x > canvas.width + 10) d.x = -10;
+
+      const a = d.alpha * (0.6 + 0.4 * Math.sin(d.pulse));
+      ctx.beginPath();
+      ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${d.color}, ${a})`;
+      ctx.fill();
+    }
+
+    particlesAnimId = requestAnimationFrame(draw);
+  }
+
+  draw();
+}
+
+export function stopParticles() {
+  particlesActive = false;
+  if (particlesAnimId) {
+    cancelAnimationFrame(particlesAnimId);
+    particlesAnimId = null;
+  }
+}
+
+// ── Botões ─────────────────────────────────────────────────────
+
 export const buttons = {
-  startId: document.getElementById("btn-start-id"),
-  startInterview: document.getElementById("btn-start-interview"),
-  newUser: document.getElementById("btn-new-user"),
+  enter: document.getElementById("btn-enter"),
   register: document.getElementById("btn-register"),
   cancelRegister: document.getElementById("btn-cancel-register"),
   stopInterview: document.getElementById("btn-stop-interview"),

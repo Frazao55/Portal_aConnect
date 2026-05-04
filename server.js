@@ -3,6 +3,7 @@ import express from "express";
 import multer from "multer";
 import fs from "fs";
 import path from "path";
+import { MIA_SESSION_INSTRUCTIONS } from "./public/js/miaPersona.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -140,7 +141,7 @@ app.get("/token", async (req, res) => {
         session: {
           type: "realtime",
           model: "gpt-realtime",
-          instructions: `És a Mia: simpática, leve e natural. Fala sempre em português europeu de Portugal. Sê curta, humana e conversacional. Nunca digas que és ChatGPT. És a entrevistadora; o tema da conversa é o uso de IA no dia a dia da empresa, não a Mia. Segue as instruções de cada resposta e usa a função submit_interview quando a conversa terminar.`.trim(),
+          instructions: MIA_SESSION_INSTRUCTIONS,
           tools: [
             {
               type: "function",
@@ -160,7 +161,7 @@ app.get("/token", async (req, res) => {
                   },
                   visao_futuro: {
                     type: "string",
-                    description: "Visão da pessoa sobre a IA no futuro dentro do contexto profissional referido"
+                    description: "Visão da pessoa sobre o futuro da IA na Arentia, nas equipas, processos ou forma de trabalhar"
                   }
                 },
                 required: ["ambiente", "problemas", "visao_futuro"]

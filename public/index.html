@@ -3,127 +3,96 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mia — Experiência de Voz</title>
+  <title>Mia</title>
   <link rel="stylesheet" href="/css/style.css" />
 </head>
 <body>
+  <canvas id="particles"></canvas>
+
   <main class="app">
     <h1>Mia</h1>
-    <p class="subtitle">Uma conversa breve sobre inteligência artificial</p>
+    <p class="subtitle">A Conquista do Futuro: Pessoas, Cultura, IA</p>
 
-    <!-- ESTADO: Inicial -->
-    <div id="screen-idle">
-      <div class="setup-stage setup-stage-idle" aria-label="Preparar sistema">
-        <div class="setup-field">
-          <span></span>
-          <span></span>
-          <span></span>
-          <span></span>
-        </div>
-        <div class="setup-copy">
-          <div class="setup-kicker">Experiência pronta</div>
-          <h2>Vamos preparar a conversa</h2>
-          <p>A Mia entra quando estiver tudo alinhado.</p>
+    <!-- ESTADO: Entrada -->
+    <div id="screen-entry">
+      <div class="entry-stage">
+        <div class="entry-glow"></div>
+        <div class="entry-rings">
+          <div></div>
+          <div></div>
         </div>
       </div>
-      <div class="btn-group">
-        <button id="btn-start-id" class="btn-primary">Preparar Sistema</button>
+      <button id="btn-enter" class="btn-enter">Entrar</button>
+    </div>
+
+    <!-- ESTADO: Loading -->
+    <div id="screen-loading" class="hidden">
+      <div class="loading-stage">
+        <div class="loading-core"></div>
+        <div class="loading-ring"></div>
+        <div class="loading-ring"></div>
+        <div class="loading-ring"></div>
       </div>
     </div>
 
-    <!-- Video (usado em vários estados) -->
-    <div id="video-container" class="video-wrapper hidden">
-      <video id="camera" autoplay muted playsinline></video>
-      <div class="video-overlay">
-        <span id="face-pill" class="pill">Face: a procurar...</span>
-        <span id="state-pill" class="pill info">Aguardar</span>
+    <!-- ESTADO: Boas-vindas -->
+    <div id="screen-welcome" class="hidden">
+      <div class="welcome-stage">
+        <div class="welcome-mark"></div>
+        <h2>Olá, <span id="welcome-name">---</span></h2>
       </div>
     </div>
 
-    <!-- ESTADO: Identificando -->
-    <div id="screen-identifying" class="hidden">
-      <div class="setup-stage setup-stage-active" aria-label="Sistema a preparar">
-        <div class="setup-field">
-          <span></span>
-          <span></span>
-          <span></span>
-          <span></span>
-        </div>
-        <div class="setup-copy">
-          <div class="setup-kicker">A preparar</div>
-          <h2 id="status-text">A alinhar o sistema</h2>
-          <p>Só um momento.</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- ESTADO: Reconhecido -->
-    <div id="screen-recognized" class="hidden">
-      <div class="setup-stage setup-stage-ready" aria-label="Sistema pronto">
-        <div class="ready-mark"></div>
-        <div class="setup-copy">
-          <div class="setup-kicker">Sistema pronto</div>
-          <h2>Olá, <span id="recognized-name">---</span></h2>
-          <p>Quando quiseres, a Mia começa.</p>
-        </div>
-      </div>
-      <div class="btn-group">
-        <button id="btn-start-interview" class="btn-primary">Pronto Para Começar</button>
-        <button id="btn-new-user" class="btn-secondary">Sou outra pessoa</button>
-      </div>
-    </div>
-
-    <!-- ESTADO: Novo utilizador -->
+    <!-- ESTADO: Registo -->
     <div id="screen-register" class="hidden">
       <div class="form-group">
         <img id="register-photo" src="" alt="Captura" />
-        <div>
-          <input type="text" id="register-name" placeholder="O teu nome" />
-        </div>
-        <div class="btn-group" style="margin-bottom:0;">
-          <button id="btn-register" class="btn-primary">Registar e Preparar</button>
-          <button id="btn-cancel-register" class="btn-danger">Cancelar</button>
+        <p class="register-intro">Ainda não nos conhecemos.</p>
+        <p class="register-sub">Como te chamas?</p>
+        <input type="text" id="register-name" placeholder="O teu nome" />
+        <div class="btn-group">
+          <button id="btn-register" class="btn-primary">Continuar</button>
+          <button id="btn-cancel-register" class="btn-ghost">Cancelar</button>
         </div>
       </div>
     </div>
 
     <!-- ESTADO: Conversa -->
     <div id="screen-interview" class="hidden">
-      <div id="mia-stage" class="mia-stage" data-presence="connecting" aria-label="Mia em conversa">
+      <div id="mia-stage" class="mia-stage" data-presence="connecting">
+        <div class="mia-avatar">
+          <img src="/images/mia.png" alt="Mia" />
+        </div>
         <div class="voice-orb">
           <span></span>
           <span></span>
           <span></span>
         </div>
-        <div id="mia-presence-text" class="presence-copy">A preparar a ligação</div>
       </div>
-      <div class="status-box">
-        <div class="label">Conversa</div>
-        <div id="interview-status">A preparar...</div>
-        <div style="margin-top:8px; font-size:0.9rem;">Tempo: <span id="interview-timer" class="timer">00:00</span> / 05:00</div>
-      </div>
-      <div class="btn-group">
-        <button id="btn-stop-interview" class="btn-danger">Parar Conversa</button>
+      <div class="interview-footer">
+        <div class="interview-timer" id="interview-timer">00:00</div>
+        <button id="btn-stop-interview" class="btn-ghost">Parar</button>
       </div>
     </div>
 
     <!-- ESTADO: Concluído -->
     <div id="screen-done" class="hidden">
       <div class="result-box">
-        <h2>Conversa Concluída</h2>
-        <p>Obrigado por participares. Os dados foram guardados.</p>
+        <div class="done-mark"></div>
+        <h2>Obrigado, <span id="done-name">---</span></h2>
+        <p>A tua contribuição foi guardada.</p>
         <button id="btn-restart" class="btn-primary">Nova Conversa</button>
       </div>
     </div>
 
-    <!-- Log -->
-    <h3 id="log-title" class="debug-log-title">Registo de eventos</h3>
+    <!-- Video oculto para deteção facial -->
+    <video id="camera" autoplay muted playsinline class="cam-hidden"></video>
+
+    <!-- Log (debug) -->
     <div id="log" class="log-container"></div>
   </main>
 
-  <!-- face-api.js -->
   <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-  <!-- App modules -->
   <script type="module" src="/js/ui.js"></script>
   <script type="module" src="/js/faceRecognition.js"></script>
   <script type="module" src="/js/openaiRealtime.js"></script>

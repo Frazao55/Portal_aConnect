@@ -1,8 +1,6 @@
-// faceRecognition.js — Deteção e reconhecimento facial
+// faceRecognition.js — Deteção e reconhecimento facial (silencioso)
 
-import {
-  hideVideo, setFacePill, setStatus, log, getVideoElement
-} from "./ui.js";
+import { log, getVideoElement } from "./ui.js";
 
 const MODEL_URL = "/models";
 
@@ -14,15 +12,14 @@ let registeredDescriptors = [];
 let registeredUsers = [];
 let currentDescriptor = null;
 let currentPhoto = null;
-let faceDetected = false;
 let faceCount = 0;
 
 export async function loadModels() {
-  log("A carregar modelos de reconhecimento facial...", "system");
+  log("A carregar modelos faciais...", "system");
   await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
   await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
   await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
-  log("Modelos carregados.", "system");
+  log("Modelos faciais carregados.", "system");
 }
 
 export async function loadRegisteredFaces() {
@@ -32,9 +29,9 @@ export async function loadRegisteredFaces() {
     const data = await res.json();
     registeredDescriptors = data.descriptors || [];
     registeredUsers = data.users || [];
-    log(`${registeredDescriptors.length} rostos registados carregados.`, "system");
+    log(`${registeredDescriptors.length} rostos carregados.`, "system");
   } catch (err) {
-    log("Erro a carregar rostos registados: " + err.message, "error");
+    log("Erro ao carregar rostos: " + err.message, "error");
     registeredDescriptors = [];
     registeredUsers = [];
   }
@@ -69,8 +66,6 @@ export function stopCamera() {
   if (video) {
     video.srcObject = null;
   }
-  hideVideo();
-  faceDetected = false;
   faceCount = 0;
   currentDescriptor = null;
   currentPhoto = null;
@@ -84,7 +79,6 @@ export function startDetection(onFaceFound, onNoFace) {
   detectionInterval = setInterval(async () => {
     if (!video || video.paused || video.ended || !isDetecting) return;
 
-    // Detetar TODAS as faces (para saber se há grupo)
     const detections = await faceapi
       .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
       .withFaceLandmarks()
@@ -93,41 +87,30 @@ export function startDetection(onFaceFound, onNoFace) {
     faceCount = detections.length;
 
     if (faceCount === 0) {
-      faceDetected = false;
       currentDescriptor = null;
       currentPhoto = null;
       stableFrames = 0;
-      setFacePill("A procurar face...", "");
       if (onNoFace) onNoFace();
       return;
     }
 
-    // Há pelo menos uma face
-    faceDetected = true;
-
     if (faceCount > 1) {
-      // Múltiplas pessoas — não tentar reconhecer individualmente
-      setFacePill(`${faceCount} pessoas detetadas`, "warn");
       stableFrames = 0;
       currentDescriptor = null;
       currentPhoto = null;
       return;
     }
 
-    // Apenas 1 pessoa — tentar reconhecer
     const detection = detections[0];
     currentDescriptor = detection.descriptor;
     currentPhoto = capturePhoto();
     stableFrames++;
 
     if (stableFrames >= REQUIRED_STABLE) {
-      setFacePill("Face estável", "success");
       if (onFaceFound) {
         const match = findBestMatch(currentDescriptor);
         onFaceFound(match);
       }
-    } else {
-      setFacePill(`Face detetada (${stableFrames}/${REQUIRED_STABLE})`, "warn");
     }
   }, 200);
 }
@@ -140,7 +123,7 @@ export function stopDetection() {
   }
 }
 
-// ── Normalização robusta de descritores ─────────────────────────────────────
+// ── Normalização robusta de descritores ─────────────────────────
 
 function normalizeClientDescriptor(raw) {
   let value = raw;
@@ -157,22 +140,12 @@ function normalizeClientDescriptor(raw) {
     }
   }
 
-  if (value && value.descriptor) {
-    value = value.descriptor;
-  }
-
-  if (Array.isArray(value) && value.length === 1 && Array.isArray(value[0])) {
-    value = value[0];
-  }
-
-  if (!Array.isArray(value) && typeof value === "object" && value !== null) {
-    value = Object.values(value);
-  }
-
+  if (value && value.descriptor) value = value.descriptor;
+  if (Array.isArray(value) && value.length === 1 && Array.isArray(value[0])) value = value[0];
+  if (!Array.isArray(value) && typeof value === "object" && value !== null) value = Object.values(value);
   if (!Array.isArray(value)) return null;
 
   const numbers = value.map(Number);
-
   if (numbers.length !== 128) return null;
   if (!numbers.every(Number.isFinite)) return null;
 
@@ -181,12 +154,7 @@ function normalizeClientDescriptor(raw) {
 
 function findBestMatch(inputDescriptor) {
   const queryDescriptor = normalizeClientDescriptor(inputDescriptor);
-
-  if (!queryDescriptor) {
-    console.warn("Descritor atual inválido");
-    return null;
-  }
-
+  if (!queryDescriptor) return null;
   if (!registeredDescriptors.length) return null;
 
   let bestMatch = null;
@@ -195,23 +163,15 @@ function findBestMatch(inputDescriptor) {
 
   for (const item of registeredDescriptors) {
     const savedDescriptor = normalizeClientDescriptor(item.descriptor);
-
-    if (!savedDescriptor) {
-      console.warn("Descritor guardado inválido ignorado:", item.label);
-      continue;
-    }
-
+    if (!savedDescriptor) continue;
     const distance = faceapi.euclideanDistance(queryDescriptor, savedDescriptor);
-
     if (distance < bestDistance) {
       bestDistance = distance;
       bestMatch = item;
     }
   }
 
-  if (!bestMatch || bestDistance > THRESHOLD) {
-    return null;
-  }
+  if (!bestMatch || bestDistance > THRESHOLD) return null;
 
   return {
     userId: bestMatch.userId,
@@ -232,10 +192,6 @@ export function getFaceCount() {
   return faceCount;
 }
 
-export function isFacePresent() {
-  return faceDetected;
-}
-
 export function capturePhoto() {
   if (!video) return null;
   const canvas = document.createElement("canvas");
@@ -247,7 +203,6 @@ export function capturePhoto() {
 }
 
 export async function registerFace(name, descriptor, photoDataUrl) {
-  // Converter dataURL para Blob
   const res = await fetch(photoDataUrl);
   const blob = await res.blob();
   const file = new File([blob], "face.jpg", { type: "image/jpeg" });
@@ -268,7 +223,6 @@ export async function registerFace(name, descriptor, photoDataUrl) {
   }
 
   const data = await response.json();
-  // Recarregar descritores
   await loadRegisteredFaces();
   return data.user;
 }

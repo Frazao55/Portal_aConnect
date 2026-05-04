@@ -1,12 +1,7 @@
 // openaiRealtime.js — Integração WebRTC com OpenAI Realtime API
 
-import {
-  setInterviewStatus,
-  setInterviewTimer,
-  log,
-  setStatePill,
-  setMiaPresence
-} from "./ui.js";
+import { setInterviewTimer, log, setMiaPresence } from "./ui.js";
+import { MIA_BASE_PERSONA, MIA_EVENT_NAME } from "./miaPersona.js";
 
 let pc = null;
 let dc = null;
@@ -28,27 +23,28 @@ let pendingUserTranscript = null;
 let ignoredInputItemIds = new Set();
 let responseDoneFallbackTimer = null;
 let iceDisconnectedTimer = null;
+let awaitingAssessment = false;
+let pendingAssessmentArgs = null;
+let pendingAssessmentInput = null;
 
 const MAX_DURATION_SECONDS = 300;
-const MAX_ATTEMPTS_PER_GOAL = 3;
-const MIN_WORDS_FOR_DIRECT_ACCEPT = 3;
+const MAX_ATTEMPTS_PER_GOAL = 2;
 const RESPONSE_DONE_AUDIO_FALLBACK_MS = 30000;
 const ICE_DISCONNECTED_GRACE_MS = 5000;
-const INTERVIEW_GOALS = ["ambiente", "problemas", "visao_futuro"];
+const INTERVIEW_GOALS = ["problemas", "visao_futuro"];
+const SOCIAL_STEP = "quebra_gelo";
+const NON_PENALIZING_ANSWER_TYPES = new Set(["confirmation_only", "question_back", "smalltalk", "skip"]);
+const PENALIZING_ANSWER_TYPES = new Set(["dont_know", "noise"]);
 const DEBUG_REALTIME = new URLSearchParams(window.location.search).get("debug") === "1";
 
 function createInterviewState() {
   return {
     warmup_done: false,
-    ambiente: null,
+    ambiente: "não especificado",
     problemas: null,
     visao_futuro: null,
-    current_goal: "warmup",
-    attempts_per_goal: {
-      ambiente: 0,
-      problemas: 0,
-      visao_futuro: 0
-    },
+    current_goal: SOCIAL_STEP,
+    attempts_per_goal: { problemas: 0, visao_futuro: 0 },
     unspecified_fields: []
   };
 }
@@ -66,6 +62,9 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
   assistantAudioStarted = false;
   pendingUserTranscript = null;
   ignoredInputItemIds = new Set();
+  awaitingAssessment = false;
+  pendingAssessmentArgs = null;
+  pendingAssessmentInput = null;
   if (responseDoneFallbackTimer) {
     clearTimeout(responseDoneFallbackTimer);
     responseDoneFallbackTimer = null;
@@ -73,8 +72,7 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
   clearIceDisconnectedTimer();
 
   try {
-    setMiaPresence("connecting", "A preparar a ligação");
-    setInterviewStatus("A preparar a conversa...");
+    setMiaPresence("connecting");
     log("[realtime] a pedir token efémero", "system");
 
     const tokenRes = await fetch("/token");
@@ -95,11 +93,9 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
         };
 
     if (!iceConfig.turnConfigured) {
-      log("[webrtc] TURN nao configurado; WebRTC pode falhar em redes empresariais", "error");
+      log("[webrtc] TURN nao configurado", "error");
     }
 
-    setMiaPresence("connecting", "A aproximar a Mia");
-    setInterviewStatus("A preparar a conversa...");
     log("[realtime] token obtido, a criar PeerConnection", "system");
 
     pc = new RTCPeerConnection({
@@ -128,14 +124,8 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
       if (!pc) return;
       log(`[webrtc] connectionState=${pc.connectionState}`, "system");
 
-      if (pc.connectionState === "connected") {
-        clearIceDisconnectedTimer();
-      }
-
-      if (pc.connectionState === "disconnected") {
-        scheduleIceDisconnectedWarning();
-      }
-
+      if (pc.connectionState === "connected") clearIceDisconnectedTimer();
+      if (pc.connectionState === "disconnected") scheduleIceDisconnectedWarning();
       if (pc.connectionState === "failed") {
         handleRealtimeConnectionFailure(new Error("A ligacao WebRTC falhou"));
       }
@@ -165,7 +155,6 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
       log("[realtime] canal de eventos aberto", "system");
       sendAssistantResponse("greeting");
     };
-
     dc.onmessage = handleRealtimeMessage;
     dc.onclose = () => {
       if (!completed) {
@@ -181,8 +170,6 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    setMiaPresence("connecting", "Quase pronto");
-    setInterviewStatus("Quase pronto...");
     const sdpResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
       method: "POST",
       body: offer.sdp,
@@ -200,9 +187,7 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
     const answerSdp = await sdpResponse.text();
     await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
-    setMiaPresence("thinking", "A Mia vai aparecer");
-    setInterviewStatus("A Mia vai começar");
-    setStatePill("Mia", "success");
+    setMiaPresence("thinking");
     log("[realtime] conversa iniciada; aguarda a saudação da Mia", "system");
 
     startTime = Date.now();
@@ -218,7 +203,6 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
     }, 1000);
   } catch (err) {
     log(`Erro Realtime: ${err.message}`, "error");
-    setInterviewStatus(`Erro: ${err.message}`);
     cleanup();
     if (onErrorCallback) onErrorCallback(err);
   }
@@ -227,56 +211,40 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
 export function stopInterview() {
   cleanup();
   log("[realtime] conversa terminada", "system");
-  setInterviewStatus("Conversa terminada");
-  setMiaPresence("idle", "Conversa terminada");
-  setStatePill("Terminado", "");
 }
 
 function cleanup() {
+  pendingAssessmentArgs = null;
+  pendingAssessmentInput = null;
   if (responseDoneFallbackTimer) {
     clearTimeout(responseDoneFallbackTimer);
     responseDoneFallbackTimer = null;
   }
-
   clearIceDisconnectedTimer();
-
   if (timerInterval) {
     clearInterval(timerInterval);
     timerInterval = null;
   }
-
   if (dc) {
-    try {
-      dc.onclose = null;
-      dc.onerror = null;
-      dc.close();
-    } catch {
-      // ignore
-    }
+    try { dc.onclose = null; dc.onerror = null; dc.close(); } catch {}
     dc = null;
   }
-
   if (pc) {
     pc.oniceconnectionstatechange = null;
     pc.onconnectionstatechange = null;
     pc.onicecandidateerror = null;
-    pc.getSenders().forEach((sender) => {
-      if (sender.track) sender.track.stop();
-    });
+    pc.getSenders().forEach((sender) => { if (sender.track) sender.track.stop(); });
     pc.close();
     pc = null;
   }
-
   if (localStream) {
     localStream.getTracks().forEach((track) => track.stop());
     localStream = null;
   }
-
   if (remoteAudio) {
     remoteAudio.srcObject = null;
     remoteAudio = null;
   }
-
   startTime = null;
 }
 
@@ -289,14 +257,10 @@ function clearIceDisconnectedTimer() {
 
 function scheduleIceDisconnectedWarning() {
   if (iceDisconnectedTimer) return;
-
   iceDisconnectedTimer = setTimeout(() => {
     iceDisconnectedTimer = null;
-
     if (!pc || pc.iceConnectionState !== "disconnected") return;
-
-    setMiaPresence("connecting", "Ligacao instavel");
-    setInterviewStatus("A ligacao esta instavel...");
+    setMiaPresence("connecting");
   }, ICE_DISCONNECTED_GRACE_MS);
 }
 
@@ -305,39 +269,32 @@ function markAssistantOutputStopped(reason = "audio_buffer_stopped") {
     clearTimeout(responseDoneFallbackTimer);
     responseDoneFallbackTimer = null;
   }
-
   assistantResponseInProgress = false;
   assistantAudioStarted = false;
-  setMiaPresence("listening", "Agora podes responder");
-  setInterviewStatus("Agora podes responder");
+  setMiaPresence("listening");
   markInternalDecision("assistant_output_stopped", { reason });
-  processPendingTranscriptIfReady();
+  if (nextAssistantStep === "close" && canFinishInterview(interviewState)) {
+    completeInterviewFromState("close_audio_finished");
+    return;
+  }
+  if (!awaitingAssessment) processPendingTranscriptIfReady();
 }
 
 function scheduleResponseDoneFallback() {
   if (responseDoneFallbackTimer || !assistantResponseInProgress) return;
-
   responseDoneFallbackTimer = setTimeout(() => {
     responseDoneFallbackTimer = null;
-
     if (!assistantResponseInProgress) return;
-
     markAssistantOutputStopped("response_done_without_audio_buffer_stopped");
   }, RESPONSE_DONE_AUDIO_FALLBACK_MS);
 }
 
 function handleRealtimeConnectionFailure(err) {
   if (completed) return;
-
   log(`[webrtc] ${err.message}`, "error");
   cleanup();
-  setMiaPresence("idle", "Ligacao perdida");
-  setInterviewStatus("Ligacao perdida. Recomeça a conversa.");
-  setStatePill("Erro", "error");
-
-  if (onErrorCallback) {
-    onErrorCallback(err);
-  }
+  setMiaPresence("idle");
+  if (onErrorCallback) onErrorCallback(err);
 }
 
 function sendEvent(event) {
@@ -365,10 +322,70 @@ function buildSubmitInterviewTool() {
         },
         visao_futuro: {
           type: "string",
-          description: "Visão da pessoa sobre a IA no futuro dentro do contexto profissional referido"
+          description: "Visão da pessoa sobre o futuro da IA na Arentia, nas equipas, processos ou forma de trabalhar"
         }
       },
       required: ["ambiente", "problemas", "visao_futuro"]
+    }
+  };
+}
+
+function buildAssessAnswerTool() {
+  return {
+    type: "function",
+    name: "assess_interview_answer",
+    description: "Classificar semanticamente a resposta da pessoa e devolver uma síntese limpa se for útil",
+    parameters: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        goal: {
+          type: "string",
+          enum: INTERVIEW_GOALS,
+          description: "Campo atualmente em avaliação"
+        },
+        userText: {
+          type: "string",
+          description: "Transcrição original da resposta avaliada"
+        },
+        answer_type: {
+          type: "string",
+          enum: ["useful_answer", "confirmation_only", "question_back", "dont_know", "noise", "smalltalk", "skip"],
+          description: "Tipo semântico da resposta"
+        },
+        accepted: {
+          type: "boolean",
+          description: "Só true quando a resposta contém informação suficiente para preencher o campo atual"
+        },
+        normalized_value: {
+          type: "string",
+          description: "Síntese curta, limpa e fiel. Usar 'não especificado' se accepted=false"
+        },
+        needs_clarification: {
+          type: "boolean",
+          description: "True quando a MIA deve pedir detalhe antes de avançar"
+        },
+        clarifying_question: {
+          type: "string",
+          description: "Pergunta curta sugerida para clarificar, em português europeu"
+        },
+        confidence: {
+          type: "number",
+          minimum: 0,
+          maximum: 1,
+          description: "Confiança na classificação"
+        }
+      },
+      required: [
+        "goal",
+        "userText",
+        "answer_type",
+        "accepted",
+        "normalized_value",
+        "needs_clarification",
+        "clarifying_question",
+        "confidence"
+      ]
     }
   };
 }
@@ -392,196 +409,64 @@ function hasAny(normalizedText, terms) {
   return terms.some((term) => normalizedText.includes(term));
 }
 
-function isShortFragment(text) {
-  return wordCount(text) > 0 && wordCount(text) < MIN_WORDS_FOR_DIRECT_ACCEPT;
+function pickVariant(options, seed = "") {
+  if (!options.length) return "";
+  const normalizedSeed = normalizeText(seed);
+  let hash = options.length;
+
+  for (const char of normalizedSeed) {
+    hash = (hash * 31 + char.charCodeAt(0)) % 9973;
+  }
+
+  return options[hash % options.length];
 }
 
 function looksReadyToStart(text) {
   const normalized = normalizeText(text);
-
   return hasAny(normalized, [
-    "sim",
-    "estou",
-    "pronto",
-    "pronta",
-    "podemos",
-    "vamos",
-    "forca",
-    "claro",
-    "ok",
-    "bora",
-    "pode ser"
+    "sim", "estou", "pronto", "pronta", "podemos", "vamos",
+    "forca", "claro", "ok", "bora", "pode ser"
   ]);
 }
 
-function looksLikeWarmupOption(text) {
+function wantsToSkipSmallTalk(text) {
   const normalized = normalizeText(text);
-
   return hasAny(normalized, [
-    "email",
-    "emails",
-    "documento",
-    "documentos",
-    "tarefa",
-    "tarefas",
-    "repetitiva",
-    "repetitivas",
-    "relatorio",
-    "relatorios",
-    "excel",
-    "dados"
+    "avancar", "avanca", "vamos ao que interessa", "sem conversa",
+    "nao tenho tempo", "tenho pressa", "vamos comecar", "salta",
+    "podes comecar", "perguntas", "pergunta"
   ]);
 }
 
 function isVagueAnswer(text, goal) {
   const normalized = normalizeText(text);
   const words = wordCount(text);
-
   if (!normalized || words === 0) return true;
 
+  if (/^[^\p{L}\p{N}]*$/u.test(text || "")) return true;
+  if (/^[^\p{Script=Latin}\p{N}]+$/u.test(normalized)) return true;
+  if (hasAny(normalized, ["gut"])) return true;
+
   const vagueExact = new Set([
-    "nao sei",
-    "nao faco ideia",
-    "sem ideia",
-    "qualquer coisa",
-    "tanto faz",
-    "depende",
-    "talvez",
-    "sim",
-    "nao",
-    "ok",
-    "pois",
-    "isso",
-    "nada",
-    "normal"
+    "nao sei", "nao faco ideia", "sem ideia", "qualquer coisa",
+    "tanto faz", "depende", "talvez", "sim", "nao", "ok", "pois", "isso", "nada", "normal"
   ]);
-
   if (vagueExact.has(normalized)) return true;
-
-  if (words <= 2 && hasAny(normalized, ["nao sei", "talvez", "depende", "normal", "melhor"])) {
-    return true;
-  }
-
-  if (goal === "visao_futuro" && normalized.includes("vai ser melhor") && words <= 4) {
-    return true;
-  }
-
+  if (words <= 2 && hasAny(normalized, ["nao sei", "talvez", "depende", "normal", "melhor"])) return true;
+  if (goal === "visao_futuro" && normalized.includes("vai ser melhor") && words <= 4) return true;
   return false;
 }
 
 function looksLikeAmbiente(text) {
   const normalized = normalizeText(text);
-  const terms = [
-    "trabalho",
-    "empresa",
-    "escritorio",
-    "cliente",
-    "clientes",
-    "equipa",
-    "departamento",
-    "arentia",
-    "reunioes",
-    "processos",
-    "dia a dia profissional",
-    "emails",
-    "email",
-    "documentos",
-    "tarefas",
-    "relatorios",
-    "dados",
-    "software",
-    "programacao",
-    "desenvolvimento",
-    "informatica",
-    "tecnologia",
-    "chatgpt",
-    "ia",
-    "inteligencia artificial",
-    "clientes"
-  ];
-
-  return hasAny(normalized, terms);
-}
-
-function looksLikeProblema(text) {
-  const normalized = normalizeText(text);
-  const terms = [
-    "organizar",
-    "emails",
-    "email",
-    "tarefas",
-    "resumir",
-    "documentos",
-    "estudar",
-    "clientes",
-    "atender",
-    "automatizar",
-    "agenda",
-    "tempo",
-    "reunioes",
-    "relatorios",
-    "resolver",
-    "ajudar",
-    "planear",
-    "marcar",
-    "responder",
-    "preencher",
-    "copiar",
-    "validar",
-    "procurar",
-    "excel",
-    "dados",
-    "faturas",
-    "pedidos",
-    "stock",
-    "inventario",
-    "repetitivo",
-    "manual",
-    "demora",
-    "perco tempo",
-    "automatizar",
-    "automatizasse",
-    "automacao"
-  ];
-
-  return hasAny(normalized, terms);
-}
-
-function looksLikeFuture(text) {
-  const normalized = normalizeText(text);
-  const terms = [
-    "futuro",
-    "daqui",
-    "anos",
-    "automatic",
-    "autonoma",
-    "autonomo",
-    "integrada",
-    "integrado",
-    "melhorar",
-    "mais util",
-    "ajudar mais",
-    "substituir",
-    "prever",
-    "personalizada",
-    "assistente"
-  ];
-
-  return hasAny(normalized, terms) || wordCount(text) >= 5;
-}
-
-function hasEnoughDetailForGoal(text, goal) {
-  const cleanText = (text || "").trim();
-
-  if (isVagueAnswer(cleanText, goal)) return false;
-  if (wordCount(cleanText) >= MIN_WORDS_FOR_DIRECT_ACCEPT) return true;
-
-  markInternalDecision("short_fragment_needs_clarification", {
-    goal,
-    text: cleanText || "<vazio>"
-  });
-
-  return false;
+  return hasAny(normalized, [
+    "trabalho", "empresa", "escritorio", "cliente", "clientes", "equipa",
+    "departamento", "arentia", "reunioes", "processos", "dia a dia profissional",
+    "emails", "email", "mail", "mails", "documentos", "tarefas", "relatorios", "dados",
+    "software", "programacao", "desenvolvimento", "informatica", "tecnologia",
+    "chatgpt", "ia", "inteligencia artificial", "fim do dia", "fechar o dia",
+    "ir embora", "final do dia", "manha", "tarde"
+  ]);
 }
 
 function markInternalDecision(type, details = {}) {
@@ -591,13 +476,11 @@ function markInternalDecision(type, details = {}) {
     details,
     time: new Date().toISOString()
   };
-
   transcript.push(item);
   log(`[decision] ${type}: ${JSON.stringify(details)}`, "system");
 }
 
 function nextGoalAfter(goal) {
-  if (goal === "ambiente") return "problemas";
   if (goal === "problemas") return "visao_futuro";
   return "close";
 }
@@ -613,12 +496,13 @@ function setGoalAsUnspecified(goal, state) {
   });
 }
 
-function acceptField(goal, value, state) {
+function acceptField(goal, value, state, raw = "") {
   const cleanValue = (value || "").trim() || "não especificado";
   state[goal] = cleanValue;
   state.attempts_per_goal[goal] = 0;
   markInternalDecision(`accepted_${goal}`, {
-    value: cleanValue
+    value: cleanValue,
+    raw: (raw || value || "").trim() || "<vazio>"
   });
 }
 
@@ -627,147 +511,224 @@ function canFinishInterview(state) {
 }
 
 function processUserTranscript(text) {
-  if (!interviewState) {
-    interviewState = createInterviewState();
+  if (!interviewState) interviewState = createInterviewState();
+  if (awaitingAssessment) {
+    pendingUserTranscript = text;
+    markInternalDecision("queued_user_transcript_during_assessment", {
+      text: text || "<vazio>",
+      goal: interviewState.current_goal
+    });
+    return;
   }
 
   if (!text.trim()) {
     if (nextAssistantStep === "greeting") {
-      sendAssistantResponse("greeting", "", {
-        reason: "empty_transcription"
-      });
+      sendAssistantResponse("greeting", "", { reason: "empty_transcription" });
       return;
     }
-
-    if (nextAssistantStep === "warmup") {
-      sendAssistantResponse("warmup", "", {
-        reason: "empty_transcription"
-      });
+    if (nextAssistantStep === SOCIAL_STEP) {
+      sendAssistantResponse(SOCIAL_STEP, "", { reason: "empty_transcription" });
       return;
     }
   }
 
   if (nextAssistantStep === "greeting") {
-    if (looksReadyToStart(text)) {
-      interviewState.current_goal = "warmup";
-      sendAssistantResponse("warmup", text);
-      return;
-    }
-
-    if (looksLikeAmbiente(text)) {
-      interviewState.current_goal = "ambiente";
-      markInternalDecision("early_context_fragment", {
-        text: text || "<vazio>"
-      });
-      sendAssistantResponse("clarify", text, {
-        reason: isShortFragment(text) ? "short_context_fragment" : "early_context_fragment"
-      });
-      return;
-    }
-
-    markInternalDecision("greeting_not_confirmed", {
-      text: text || "<vazio>"
-    });
-    sendAssistantResponse("greeting", text, {
-      reason: "not_ready_confirmation"
-    });
-    return;
-  }
-
-  if (nextAssistantStep === "warmup") {
-    interviewState.warmup_done = true;
-    if (looksLikeWarmupOption(text) || (looksLikeAmbiente(text) && hasEnoughDetailForGoal(text, "ambiente"))) {
-      acceptField("ambiente", text, interviewState);
+    if (wantsToSkipSmallTalk(text) || looksLikeAmbiente(text)) {
+      interviewState.warmup_done = true;
       interviewState.current_goal = "problemas";
-      markInternalDecision("warmup_done", {
-        text: text || "<vazio>",
-        acceptedAmbiente: true
-      });
-      sendAssistantResponse("problemas", text);
+      markInternalDecision("quebra_gelo_skipped", { text: text || "<vazio>" });
+      sendAssistantResponse("problemas", text, { reason: "skip_small_talk" });
       return;
     }
 
-    interviewState.current_goal = "ambiente";
-    markInternalDecision("warmup_done", {
+    if (looksReadyToStart(text)) {
+      interviewState.current_goal = SOCIAL_STEP;
+      sendAssistantResponse(SOCIAL_STEP, text);
+      return;
+    }
+
+    interviewState.current_goal = SOCIAL_STEP;
+    markInternalDecision("greeting_acknowledged", { text: text || "<vazio>" });
+    sendAssistantResponse(SOCIAL_STEP, text);
+    return;
+  }
+
+  if (nextAssistantStep === SOCIAL_STEP) {
+    interviewState.warmup_done = true;
+    interviewState.current_goal = "problemas";
+    markInternalDecision("quebra_gelo_done", {
       text: text || "<vazio>",
-      needsContextClarification: looksLikeAmbiente(text) && isShortFragment(text)
+      skipped: wantsToSkipSmallTalk(text)
     });
-    sendAssistantResponse(
-      looksLikeAmbiente(text) && isShortFragment(text) ? "clarify" : "ambiente",
-      text,
-      looksLikeAmbiente(text) && isShortFragment(text)
-        ? { reason: "short_context_fragment" }
-        : null
-    );
+    sendAssistantResponse("problemas", text, {
+      reason: wantsToSkipSmallTalk(text) ? "skip_small_talk" : "social_done"
+    });
     return;
   }
 
-  if (nextAssistantStep === "close") {
+  if (nextAssistantStep === "close") return;
+
+  if (INTERVIEW_GOALS.includes(interviewState.current_goal)) {
+    sendAssessmentRequest(interviewState.current_goal, text);
     return;
   }
 
-  const decision = evaluateAnswer(text, interviewState);
-  interviewState.current_goal = decision.nextGoal;
-  sendAssistantResponse(decision.nextStep, text, decision);
+  sendAssistantResponse("clarify", text, { reason: "unexpected_state" });
 }
 
 function processPendingTranscriptIfReady() {
   if (assistantResponseInProgress || !pendingUserTranscript) return;
-
   const text = pendingUserTranscript;
   pendingUserTranscript = null;
-  markInternalDecision("processed_pending_transcript", {
-    text
-  });
+  markInternalDecision("processed_pending_transcript", { text });
   processUserTranscript(text);
 }
 
-function evaluateAnswer(text, state) {
-  const goal = state.current_goal;
-  const cleanText = (text || "").trim();
+function buildRecentContext() {
+  return transcript
+    .filter((item) => item.role === "user" || item.role === "assistant")
+    .slice(-8)
+    .map((item) => `${item.role === "user" ? "Pessoa" : "MIA"}: ${item.text}`)
+    .join("\n");
+}
 
-  if (!INTERVIEW_GOALS.includes(goal)) {
+function buildAssessmentPrompt(goal, userText) {
+  const state = interviewState || createInterviewState();
+  const fieldLabel = {
+    problemas: "tarefa, processo ou problema concreto que a IA devia ajudar a resolver ou automatizar",
+    visao_futuro: "visão de futuro sobre como a IA pode ajudar a Arentia"
+  }[goal];
+
+  return [
+    MIA_BASE_PERSONA,
+    "TAREFA SILENCIOSA: não fales com a pessoa agora.",
+    "Chama obrigatoriamente a função assess_interview_answer. Não devolvas texto normal.",
+    `Campo atual: ${goal} (${fieldLabel}).`,
+    `Resposta da pessoa a avaliar: ${userText || "<vazio>"}`,
+    "Campos já recolhidos:",
+    `ambiente: ${state.ambiente || "não especificado"}`,
+    `problemas: ${state.problemas || "em falta"}`,
+    `visao_futuro: ${state.visao_futuro || "em falta"}`,
+    "Histórico recente:",
+    buildRecentContext() || "sem histórico",
+    "Classifica semanticamente a resposta.",
+    "accepted só pode ser true se answer_type for useful_answer.",
+    "Não aceites confirmações como 'sim' como resposta útil.",
+    "Não aceites perguntas da pessoa como resposta útil; usa answer_type question_back.",
+    "Não aceites 'não sei', 'boa questão mas não sei' ou equivalentes como resposta útil.",
+    "Para problemas, avalia se a resposta identifica um problema, tarefa ou processo que a IA poderia resolver ou automatizar.",
+    "Para visao_futuro, avalia se a resposta descreve uma expectativa para o futuro da IA na Arentia, mesmo que mencione o problema anterior.",
+    "Se a resposta for curta mas útil no contexto, como 'marcações' para problema, aceita.",
+    "normalized_value deve ser uma síntese curta e limpa, nunca uma transcrição quebrada.",
+    "Exemplos de normalização:",
+    "- 'Eu responderam eles por mim' => 'responder mensagens ou pedidos pela pessoa'",
+    "- 'OK, como é que eu penso que ela vai funcionar?' => accepted=false, answer_type=question_back",
+    "clarifying_question deve ser curta, oral e adequada ao tipo de resposta."
+  ].join("\n").trim();
+}
+
+function fallbackAssessAnswer(goal, userText, state) {
+  const cleanText = (userText || "").trim();
+  const normalized = normalizeText(cleanText);
+  const exactConfirmation = new Set(["sim", "sim claro", "claro", "ok", "pois", "ya"]);
+
+  if (!cleanText || isVagueAnswer(cleanText, goal)) {
     return {
-      accepted: true,
-      nextStep: goal === "warmup" ? "bridge" : "close",
-      nextGoal: goal === "warmup" ? "ambiente" : goal,
-      reason: "social_step"
+      goal,
+      userText: cleanText,
+      answer_type: exactConfirmation.has(normalized) ? "confirmation_only" : "noise",
+      accepted: false,
+      normalized_value: "não especificado",
+      needs_clarification: true,
+      clarifying_question: exactConfirmation.has(normalized)
+        ? "Boa. Qual é a primeira coisa que te vem à cabeça?"
+        : "Não apanhei bem. Dizes-me de outra forma?",
+      confidence: 0.35
     };
   }
 
-  state.attempts_per_goal[goal] += 1;
-
-  const vague = isVagueAnswer(cleanText, goal);
-  let accepted = false;
-
-  if (!vague && goal === "ambiente" && looksLikeAmbiente(cleanText) && hasEnoughDetailForGoal(cleanText, goal)) {
-    acceptField("ambiente", cleanText, state);
-    accepted = true;
-  } else if (!vague && goal === "problemas" && looksLikeProblema(cleanText) && hasEnoughDetailForGoal(cleanText, goal)) {
-    acceptField("problemas", cleanText, state);
-    accepted = true;
-  } else if (!vague && goal === "visao_futuro" && looksLikeFuture(cleanText) && hasEnoughDetailForGoal(cleanText, goal)) {
-    acceptField("visao_futuro", cleanText, state);
-    accepted = true;
+  if (normalized.endsWith("como e que eu penso que ela vai funcionar") || normalized.includes("como e que eu penso")) {
+    return {
+      goal,
+      userText: cleanText,
+      answer_type: "question_back",
+      accepted: false,
+      normalized_value: "não especificado",
+      needs_clarification: true,
+      clarifying_question: "É mesmo isso: imagina-a a funcionar. O que fazia por ti?",
+      confidence: 0.5
+    };
   }
 
-  if (accepted) {
+  return {
+    goal,
+    userText: cleanText,
+    answer_type: "dont_know",
+    accepted: false,
+    normalized_value: "não especificado",
+    needs_clarification: true,
+    clarifying_question: "Vamos simplificar: que tarefa gostavas de despachar mais depressa?",
+    confidence: 0.2
+  };
+}
+
+function applyAssessment(rawAssessment) {
+  if (!interviewState) interviewState = createInterviewState();
+
+  const goal = INTERVIEW_GOALS.includes(rawAssessment?.goal)
+    ? rawAssessment.goal
+    : interviewState.current_goal;
+  const answerType = rawAssessment?.answer_type || "noise";
+  const accepted = Boolean(rawAssessment?.accepted) && answerType === "useful_answer";
+  const normalizedValue = (rawAssessment?.normalized_value || "").trim();
+  const userText = (rawAssessment?.userText || "").trim();
+  const state = interviewState;
+
+  awaitingAssessment = false;
+
+  markInternalDecision("semantic_assessment", {
+    goal,
+    answerType,
+    accepted,
+    normalizedValue: normalizedValue || "<vazio>",
+    confidence: rawAssessment?.confidence ?? null
+  });
+
+  if (accepted && normalizedValue && normalizedValue !== "não especificado") {
+    acceptField(goal, normalizedValue, state, userText);
     const nextGoal = canFinishInterview(state)
       ? "close"
       : INTERVIEW_GOALS.find((item) => !state[item]) || nextGoalAfter(goal);
+    state.current_goal = nextGoal;
+    sendAssistantResponse(nextGoal === "close" ? "close" : nextGoal, userText, {
+      reason: "accepted",
+      assessment: rawAssessment
+    });
+    return;
+  }
 
-    return {
-      accepted: true,
-      nextStep: nextGoal === "close" ? "close" : nextGoal,
-      nextGoal,
-      reason: "accepted"
-    };
+  if (answerType === "skip") {
+    setGoalAsUnspecified(goal, state);
+    const nextGoal = canFinishInterview(state)
+      ? "close"
+      : INTERVIEW_GOALS.find((item) => !state[item]) || nextGoalAfter(goal);
+    state.current_goal = nextGoal;
+    sendAssistantResponse(nextGoal === "close" ? "close" : nextGoal, userText, {
+      reason: "skip",
+      assessment: rawAssessment
+    });
+    return;
+  }
+
+  if (PENALIZING_ANSWER_TYPES.has(answerType) || answerType === "useful_answer") {
+    state.attempts_per_goal[goal] += 1;
   }
 
   markInternalDecision("needs_clarification", {
     goal,
+    answerType,
     attempt: state.attempts_per_goal[goal],
-    text: cleanText || "<vazio>"
+    text: userText || "<vazio>"
   });
 
   if (state.attempts_per_goal[goal] >= MAX_ATTEMPTS_PER_GOAL) {
@@ -775,21 +736,19 @@ function evaluateAnswer(text, state) {
     const nextGoal = canFinishInterview(state)
       ? "close"
       : INTERVIEW_GOALS.find((item) => !state[item]) || nextGoalAfter(goal);
-
-    return {
-      accepted: false,
-      nextStep: nextGoal === "close" ? "close" : nextGoal,
-      nextGoal,
-      reason: "fallback_after_attempts"
-    };
+    state.current_goal = nextGoal;
+    sendAssistantResponse(nextGoal === "close" ? "close" : nextGoal, userText, {
+      reason: "fallback_after_attempts",
+      assessment: rawAssessment
+    });
+    return;
   }
 
-  return {
-    accepted: false,
-    nextStep: "clarify",
-    nextGoal: goal,
-    reason: state.attempts_per_goal[goal] >= 2 ? "needs_example" : "needs_clarification"
-  };
+  state.current_goal = goal;
+  sendAssistantResponse("clarify", userText, {
+    reason: NON_PENALIZING_ANSWER_TYPES.has(answerType) ? answerType : "needs_clarification",
+    assessment: rawAssessment
+  });
 }
 
 function buildResponsePrompt(step, userText = "", decision = null) {
@@ -802,95 +761,88 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     ? `O utilizador chama-se ${currentUserName}.`
     : "Não sei o nome da pessoa.";
   const greeting = isGroup
-    ? "Olá a todos, sou a Mia. Vou só conversar convosco um bocadinho antes de começarmos. Estão prontos?"
+    ? pickVariant([
+        "Olá a todos! Sou a MIA. Vamos conquistar o futuro?",
+        "Boa, sejam bem-vindos. Sou a MIA.",
+        "Olá! Sou a MIA. Que bom ter-vos por cá."
+      ], `${currentFaceCount}-grupo`)
     : hasName
-      ? `Olá ${currentUserName}, sou a Mia. Vou só conversar contigo um bocadinho antes de começarmos. Estás pronto?`
-      : "Olá, sou a Mia. Vou só conversar contigo um bocadinho antes de começarmos. Estás pronto?";
+      ? pickVariant([
+          `Olá ${currentUserName}! Sou a MIA. Vamos conquistar o futuro?`,
+          `Olá ${currentUserName}! Que bom ver-te por cá. Sou a MIA.`,
+          `Boa, ${currentUserName}! Bem-vindo. Sou a MIA.`,
+          `Ora bem, ${currentUserName}. Sou a MIA. Vamos a isto?`
+        ], currentUserName)
+      : pickVariant([
+          "Olá! Sou a MIA. Ainda não te apanhei o nome, mas já cá estamos.",
+          "Olá! Sou a MIA, prazer. Vamos começar com calma.",
+          "Boa, bem-vindo. Sou a MIA."
+        ], "sem-nome");
   const state = interviewState || createInterviewState();
   const attempt = state.current_goal && state.attempts_per_goal[state.current_goal]
     ? state.attempts_per_goal[state.current_goal]
     : 0;
   const includeExample = decision?.reason === "needs_example" || attempt >= 2;
   const collected = [
-    `ambiente: ${state.ambiente || "em falta"}`,
+    `ambiente: ${state.ambiente || "não especificado"}`,
     `problema: ${state.problemas || "em falta"}`,
     `visão de futuro: ${state.visao_futuro || "em falta"}`
   ].join("\n");
 
   const base = [
-    "Tu és a Mia.",
-    "Tu és a entrevistadora/facilitadora. O tema é a IA no geral, não a Mia.",
+    MIA_BASE_PERSONA,
     intro,
     nameLine,
-    "Objetivo da experiência: criar conforto primeiro e depois recolher ideias úteis sobre IA no contexto da empresa.",
-    "As duas respostas finais são: 1) que tarefa, processo ou problema concreto no dia a dia da empresa a IA podia ajudar a resolver ou automatizar; 2) como a pessoa imagina a IA nesse contexto profissional daqui a alguns anos.",
-    "Fala sempre em português europeu de Portugal.",
-    "Usa 'tu'.",
-    "Sê curto, natural e falado.",
-    "Não digas que és ChatGPT.",
-    "Não uses expressões do Brasil.",
-    "Não uses 'olha', 'a Mia pode ser útil', 'a Mia devia ajudar', 'posso fazer-te', 'gostava de te fazer' nem 'duas perguntas rápidas'.",
+    `Evento: ${MIA_EVENT_NAME}.`,
+    "Objetivo da experiência: criar conforto primeiro e depois recolher duas ideias úteis sobre IA na Arentia.",
+    "As duas respostas finais são: 1) que problema, tarefa ou processo no dia a dia da Arentia a IA podia ajudar a resolver ou automatizar; 2) como a pessoa imagina a IA no futuro da Arentia.",
+    "Não uses 'a Mia pode ser útil', 'a Mia devia ajudar', 'posso fazer-te', 'gostava de te fazer' nem 'duas perguntas rápidas'.",
     "Quando falares do tema, diz sempre 'a IA', 'uma IA' ou 'inteligência artificial', nunca 'a Mia'.",
     "Máximo uma pergunta por resposta.",
     "O frontend decide quando há dados suficientes. Não digas que vais avançar por tua iniciativa.",
-    "Só podes chamar submit_interview quando este prompt disser explicitamente para fechar.",
+    "Só podes chamar submit_interview quando uma tool submit_interview estiver disponível e o prompt pedir explicitamente para fechar.",
+    "Só podes chamar assess_interview_answer em respostas silenciosas de avaliação; nunca durante o fecho.",
     "Dados recolhidos até agora:",
     collected
   ];
 
   if (step === "greeting") {
-    if (decision?.reason === "not_ready_confirmation") {
+    if (decision?.reason === "empty_transcription") {
       return [
         ...base,
-        `Ultima resposta do utilizador: ${userText || "sem resposta"}.`,
-        "A pessoa nao confirmou que esta pronta para comecar.",
-        "Nao mudes de tema e nao perguntes sobre IA ainda.",
-        "Pede desculpa em meia frase se nao percebeste bem e pergunta se podemos comecar.",
-        "Faz uma unica pergunta curta."
+        "A pessoa ainda não respondeu.",
+        "Repete uma saudação curta, sem pressionar.",
+        "Faz uma única pergunta simples para confirmar que pode começar."
       ].join("\n").trim();
     }
 
     return [
       ...base,
       "PRIMEIRA FALA:",
-      "Diz quase exactamente a frase de exemplo.",
-      "A tua voz deve soar simpática, leve e natural.",
-      "Não faças perguntas sobre IA, objetivo ou autorização.",
+      "Diz uma saudação próxima e curta.",
+      "Não faças perguntas sobre IA, trabalho ou objetivo. Se a frase de exemplo tiver uma pergunta retórica, não acrescentes outra.",
       `Exemplo: \"${greeting}\"`,
       "Não acrescentes mais nada nesta primeira fala.",
       "Se a pessoa reclamar que foste direto, pede desculpa e volta a uma saudação curta."
     ].join("\n").trim();
   }
 
-  if (step === "warmup") {
-    return [
-      ...base,
-      "SEGUNDA TROCA SOCIAL:",
-      "Responde de forma curta e natural ao que a pessoa disse, sem abrir um tema novo.",
-      "Depois faz uma pergunta muito fácil de responder e já orientada para o trabalho.",
-      isGroup
-        ? "Exemplo: \"Perfeito. Antes de irmos ao tema, no vosso trabalho é mais comum perderem tempo com emails, documentos ou tarefas repetitivas?\""
-        : "Exemplo: \"Perfeito. Antes de irmos ao tema, no teu trabalho é mais comum perderes tempo com emails, documentos ou tarefas repetitivas?\"",
-      "Se a pessoa reclamar do ritmo, responde: \"Tens razão, desculpa. Comecemos com calma: está tudo bem contigo?\"",
-      "Ainda não expliques o objetivo da experiência.",
-      "A Mia deve soar leve, quase como uma conversa de corredor, mas deve dar opções para a pessoa não ficar sem saber o que dizer."
-    ].join("\n").trim();
-  }
-
-  if (step === "ambiente" || step === "bridge") {
+  if (step === SOCIAL_STEP) {
     return [
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
-      "OBJETIVO ATUAL: CONTEXTO PROFISSIONAL.",
-      "Começa com uma frase leve que ligue a conversa ao dia a dia na empresa.",
-      "Não uses tom de formulário nem digas 'perguntas rápidas'.",
-      "Explica em meia frase que estás a recolher ideias sobre onde a IA pode ajudar no trabalho.",
+      "QUEBRA-GELO:",
+      "Esta fase é só acolhimento. Ainda não recolhas dados sobre IA nem sobre trabalho.",
+      "Responde de forma curta e natural ao que a pessoa disse.",
+      "Depois faz uma única pergunta leve e humana.",
       isGroup
-        ? "Pergunta: \"No vosso dia a dia na empresa, em que área ou momento faria mais sentido usar IA?\""
-        : "Pergunta: \"No teu dia a dia na empresa, em que área ou momento faria mais sentido usar IA?\"",
-      "Não abras opções fora da empresa; mantém sempre o foco no trabalho.",
-      "Não perguntes ainda pela visão de futuro.",
-      "Mantém um tom calmo, leve e humano."
+        ? "Exemplo: \"Antes de começarmos a sério, digam-me uma coisa: chegaram cá hoje com que ânimo?\""
+        : hasName
+          ? `Exemplo: \"Diz-me, ${currentUserName}: chegaste cá hoje com que ânimo?\"`
+          : "Exemplo: \"Diz-me uma coisa: chegaste cá hoje com que ânimo?\"",
+      "Usa a pergunta do ânimo como opção principal. Só varia se fizer mesmo sentido no momento.",
+      "Se a pessoa estiver sem vontade de conversa fiada, diz algo como: \"Boa, vamos diretos ao assunto.\"",
+      "Não expliques ainda o objetivo da experiência."
     ].join("\n").trim();
   }
 
@@ -898,9 +850,16 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     return [
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
-      "OBJETIVO ATUAL: PROBLEMA CONCRETO.",
-      "Pergunta de forma curta e natural que tarefa, processo ou parte repetitiva do trabalho a IA devia ajudar a resolver ou automatizar.",
+      "OBJETIVO ATUAL: PRIMEIRA PERGUNTA PRINCIPAL, PROBLEMA CONCRETO.",
+      decision?.reason === "social_done" || decision?.reason === "skip_small_talk"
+        ? "Começa com uma transição curta do quebra-gelo para a primeira pergunta principal."
+        : "Se a resposta anterior já trouxe contexto útil, reconhece-o numa frase curta antes de perguntar.",
+      "Pergunta de forma independente que problema, tarefa ou processo do dia a dia da Arentia a IA poderia ajudar a resolver ou automatizar.",
+      isGroup
+        ? "Pergunta: \"No vosso dia a dia na Arentia, que problema, tarefa ou processo gostavam que a IA ajudasse a resolver ou automatizar?\""
+        : "Pergunta: \"No teu dia a dia na Arentia, que problema, tarefa ou processo gostavas que a IA ajudasse a resolver ou automatizar?\"",
       "Exemplos de ajuda: organizar tarefas, responder ou resumir emails, resumir documentos, preparar relatórios, preencher dados, apoiar clientes, procurar informação interna.",
+      "Se a pessoa responder só com uma palavra mas ela fizer sentido no contexto, como 'marcações', aceita e avança.",
       "A resposta tem de permitir preencher um problema concreto do dia a dia na empresa.",
       "Não perguntes ainda pela visão de futuro."
     ].join("\n").trim();
@@ -910,22 +869,21 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     return [
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
-      "OBJETIVO ATUAL: VISÃO DE FUTURO.",
-      "Pergunta de forma curta e natural como a pessoa imagina a IA no futuro no mesmo contexto profissional.",
-      isGroup
-        ? "Exemplo: \"E pensando nesse contexto, como imaginas a IA daqui a 5 ou 10 anos?\""
-        : "Exemplo: \"E pensando nesse contexto, como imaginas a IA daqui a 5 ou 10 anos?\"",
-      "A resposta deve capturar uma visão ou expectativa, não apenas 'vai ser melhor'.",
+      "OBJETIVO ATUAL: SEGUNDA PERGUNTA PRINCIPAL, VISÃO DE FUTURO DA ARENTIA.",
+      "Faz uma transição curta: reconhece o problema registado, mas deixa claro que agora a pergunta é mais ampla.",
+      "Pergunta como a pessoa imagina a IA no futuro da Arentia: nas equipas, nos processos ou na forma de trabalhar.",
+      `Exemplo: "Boa. Agora olhando para a Arentia daqui a uns anos: como imaginas que a IA pode ajudar as equipas, os processos ou a forma de trabalhar?"`,
+      "A resposta deve capturar uma visão ou expectativa para a Arentia, não apenas para o problema anterior.",
       "Não feches a conversa nesta fala."
     ].join("\n").trim();
   }
 
   if (step === "clarify") {
     const goal = state.current_goal;
+    const assessment = decision?.assessment || null;
     const goalLabel = {
-      ambiente: "a área ou momento do trabalho onde a IA faria sentido",
       problemas: "a tarefa, processo ou problema concreto que a IA devia ajudar a resolver ou automatizar",
-      visao_futuro: "a forma como imagina a IA no futuro nesse contexto profissional"
+      visao_futuro: "a visão sobre a IA no futuro da Arentia"
     }[goal] || "o detalhe em falta";
 
     const shortFragmentLine = decision?.reason === "short_context_fragment"
@@ -934,9 +892,8 @@ function buildResponsePrompt(step, userText = "", decision = null) {
 
     const exampleLine = includeExample
       ? {
-          ambiente: "Dá exemplos curtos só dentro da empresa: atendimento a clientes, relatórios, operações, gestão interna ou trabalho de equipa.",
           problemas: "Dá exemplos curtos: emails, relatórios, dados em Excel, tarefas repetitivas, documentos ou apoio a clientes.",
-          visao_futuro: "Dá exemplos curtos: uma IA mais autónoma, integrada nas ferramentas, ou capaz de antecipar necessidades."
+          visao_futuro: "Dá exemplos curtos: IA mais integrada nas ferramentas, a apoiar equipas, a antecipar necessidades ou a simplificar processos."
         }[goal]
       : "Não dês exemplos ainda; apenas reformula de forma mais simples.";
 
@@ -944,9 +901,13 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
       `OBJETIVO ATUAL: CLARIFICAR ${goalLabel}.`,
-      "A resposta anterior não foi específica o suficiente para avançar.",
+      assessment ? `Classificação semântica: ${assessment.answer_type}.` : "A resposta anterior não foi específica o suficiente para avançar.",
+      assessment?.clarifying_question ? `Pergunta sugerida: "${assessment.clarifying_question}"` : null,
       shortFragmentLine,
       exampleLine,
+      "Evita soar a interrogatório. Se já houver uma pista útil, confirma a pista e faz uma pergunta muito simples.",
+      "Se a resposta foi só confirmação, pergunta qual é a tarefa ou momento concreto sem dizer que a resposta foi insuficiente.",
+      "Se a pessoa devolveu uma pergunta, esclarece em meia frase e volta a pedir um exemplo.",
       "Responde com empatia em meia frase e faz uma única pergunta curta.",
       "Não avances para outro tema."
     ].filter(Boolean).join("\n").trim();
@@ -957,22 +918,51 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     `Última resposta do utilizador: ${userText || "sem resposta"}.`,
     "FECHO:",
     "Todos os campos já foram preenchidos ou marcados como não especificado pelo frontend.",
-    `Chama submit_interview com estes valores exactos:
+    "Usa apenas os valores limpos nos campos recolhidos. Nunca repitas transcrições brutas ou frases quebradas da pessoa.",
+    `Valores que serão guardados automaticamente pelo frontend:
 ambiente: ${state.ambiente || "não especificado"}
 problemas: ${state.problemas || "não especificado"}
 visao_futuro: ${state.visao_futuro || "não especificado"}`,
-    "Antes da chamada, agradece numa frase curta.",
-    "Quando chamares submit_interview, usa frases curtas e fiéis ao que a pessoa disse. Não inventes detalhes."
+    "Não chames nenhuma função.",
+    "Faz um fecho curto, caloroso e com mini-resumo do que ficou registado.",
+    "No fecho, resume só o problema e a visão de futuro. Não menciones o campo ambiente nem digas que ficou não especificado.",
+    "Exemplo de tom: \"Boa, Diogo. Fica registado: IA a ajudar com marcações por email no fim do dia, com contexto suficiente para não te interromper. Obrigado por deixares a tua marca.\"",
+    "Não termines só com 'Obrigado, ficou registado'."
   ].join("\n").trim();
+}
+
+function sendAssessmentRequest(goal, userText = "") {
+  if (!dc || dc.readyState !== "open") return;
+
+  awaitingAssessment = true;
+  pendingAssessmentArgs = null;
+  pendingAssessmentInput = { goal, userText };
+  nextAssistantStep = "assess";
+  assistantResponseInProgress = true;
+  assistantAudioStarted = false;
+  setMiaPresence("thinking");
+  log(`[realtime] response.create assessment goal=${goal}`, "system");
+  log(`[realtime] assessment prompt goal=${goal}; userText=${userText || "<vazio>"}`, "system");
+
+  sendEvent({
+    type: "response.create",
+    response: {
+      output_modalities: ["text"],
+      tools: [buildAssessAnswerTool()],
+      tool_choice: "required",
+      instructions: buildAssessmentPrompt(goal, userText)
+    }
+  });
 }
 
 function sendAssistantResponse(step, userText = "", decision = null) {
   if (!dc || dc.readyState !== "open") return;
 
+  awaitingAssessment = false;
   nextAssistantStep = step;
   assistantResponseInProgress = true;
   assistantAudioStarted = false;
-  setMiaPresence("thinking", "A Mia está quase a falar");
+  setMiaPresence("thinking");
   log(`[realtime] response.create step=${step}`, "system");
   log(`[realtime] prompt step=${step}; userText=${userText || "<vazio>"}`, "system");
 
@@ -980,28 +970,20 @@ function sendAssistantResponse(step, userText = "", decision = null) {
     type: "response.create",
     response: {
       output_modalities: ["audio"],
-      tools: [buildSubmitInterviewTool()],
+      tools: step === "close" ? [] : [buildAssessAnswerTool(), buildSubmitInterviewTool()],
       instructions: buildResponsePrompt(step, userText, decision)
     }
   });
+}
 
-  if (step === "greeting" && decision?.reason === "not_ready_confirmation") {
-    setInterviewStatus("A Mia vai confirmar se podes comecar");
-  } else if (step === "greeting") {
-    setInterviewStatus("A Mia vai começar");
-  } else if (step === "warmup") {
-    setInterviewStatus("A Mia vai responder");
-  } else if (step === "ambiente" || step === "bridge") {
-    setInterviewStatus("A Mia vai perguntar pelo contexto");
-  } else if (step === "problemas" || step === "problem") {
-    setInterviewStatus("A Mia vai fazer a pergunta principal");
-  } else if (step === "visao_futuro" || step === "future") {
-    setInterviewStatus("A Mia vai perguntar pelo futuro");
-  } else if (step === "clarify") {
-    setInterviewStatus("A Mia vai clarificar antes de avançar");
-  } else if (step === "close") {
-    setInterviewStatus("A Mia vai fechar a conversa");
-  }
+function completeInterviewFromState(reason = "state_complete") {
+  if (!interviewState || !canFinishInterview(interviewState)) return;
+  markInternalDecision("auto_submit_after_close", { reason });
+  completeInterview({
+    ambiente: interviewState.ambiente || "não especificado",
+    problemas: interviewState.problemas || "não especificado",
+    visao_futuro: interviewState.visao_futuro || "não especificado"
+  });
 }
 
 function completeInterview(args) {
@@ -1009,26 +991,19 @@ function completeInterview(args) {
 
   if (!interviewState || !canFinishInterview(interviewState)) {
     const recoveryGoal = interviewState
-      ? INTERVIEW_GOALS.find((goal) => !interviewState[goal]) || "ambiente"
-      : "ambiente";
-
-    if (interviewState) {
-      interviewState.current_goal = recoveryGoal;
-    }
-
+      ? INTERVIEW_GOALS.find((goal) => !interviewState[goal]) || "problemas"
+      : "problemas";
+    if (interviewState) interviewState.current_goal = recoveryGoal;
     markInternalDecision("blocked_premature_submit", {
       args,
       recoveryGoal,
       state: interviewState
     });
-    sendAssistantResponse(recoveryGoal, "", {
-      reason: "premature_submit_blocked"
-    });
+    sendAssistantResponse(recoveryGoal, "", { reason: "premature_submit_blocked" });
     return;
   }
 
   completed = true;
-
   const result = {
     ambiente: interviewState.ambiente || args.ambiente || "não especificado",
     problemas: interviewState.problemas || args.problemas || "não especificado",
@@ -1043,10 +1018,7 @@ function completeInterview(args) {
   };
 
   cleanup();
-
-  if (onCompleteCallback) {
-    onCompleteCallback(result);
-  }
+  if (onCompleteCallback) onCompleteCallback(result);
 }
 
 function handleRealtimeMessage(event) {
@@ -1059,15 +1031,12 @@ function handleRealtimeMessage(event) {
       msg.type !== "response.audio_transcript.delta" &&
       msg.type !== "conversation.item.input_audio_transcription.delta"
     ) {
-      if (DEBUG_REALTIME) {
-        console.log("Realtime:", msg.type, msg);
-      }
+      if (DEBUG_REALTIME) console.log("Realtime:", msg.type, msg);
     }
 
     if (msg.type === "output_audio_buffer.started") {
       assistantAudioStarted = true;
-      setMiaPresence("speaking", "");
-      setInterviewStatus("A Mia está a falar");
+      setMiaPresence("speaking");
       return;
     }
 
@@ -1103,7 +1072,6 @@ function handleRealtimeMessage(event) {
 
     if (msg.type === "conversation.item.input_audio_transcription.completed") {
       const text = msg.transcript || "";
-
       if (ignoredInputItemIds.has(msg.item_id)) {
         ignoredInputItemIds.delete(msg.item_id);
         markInternalDecision("ignored_transcript_during_assistant", {
@@ -1112,7 +1080,6 @@ function handleRealtimeMessage(event) {
         });
         return;
       }
-
       if (text) {
         log(`Pessoa: ${text}`, "user");
         transcript.push({ role: "user", text, time: new Date().toISOString() });
@@ -1121,9 +1088,7 @@ function handleRealtimeMessage(event) {
           goal: interviewState?.current_goal || nextAssistantStep
         });
       }
-
       if (completed) return;
-
       if (assistantResponseInProgress) {
         pendingUserTranscript = text;
         markInternalDecision("queued_user_transcript", {
@@ -1132,7 +1097,6 @@ function handleRealtimeMessage(event) {
         });
         return;
       }
-
       processUserTranscript(text);
       return;
     }
@@ -1142,15 +1106,10 @@ function handleRealtimeMessage(event) {
       msg.type === "response.audio_transcript.done"
     ) {
       const text = msg.transcript || "";
-
       if (text) {
         log(`IA: ${text}`, "assistant");
         transcript.push({ role: "assistant", text, time: new Date().toISOString() });
-        if (nextAssistantStep === "greeting") {
-          log("[realtime] Mia cumprimentou, vai passar ao warmup", "system");
-        }
       }
-
       return;
     }
 
@@ -1165,10 +1124,33 @@ function handleRealtimeMessage(event) {
       return;
     }
 
+    if (msg.type === "response.function_call_arguments.done" && msg.name === "assess_interview_answer") {
+      if (!awaitingAssessment) {
+        markInternalDecision("ignored_unexpected_assessment_call", { nextAssistantStep });
+        return;
+      }
+      try {
+        const args = JSON.parse(msg.arguments || "{}");
+        log(`Avaliação semântica: ${JSON.stringify(args)}`, "system");
+        pendingAssessmentArgs = args;
+      } catch (parseErr) {
+        log(`Erro ao parsear avaliação: ${parseErr.message}`, "error");
+        const goal = interviewState?.current_goal || "problemas";
+        pendingAssessmentArgs = fallbackAssessAnswer(
+          goal,
+          pendingAssessmentInput?.userText || "",
+          interviewState || createInterviewState()
+        );
+      }
+      return;
+    }
+
     if (msg.type === "response.done" && msg.response?.output) {
-      if (assistantResponseInProgress && !assistantAudioStarted) {
+      const wasAwaitingAssessment = awaitingAssessment;
+
+      if (!wasAwaitingAssessment && assistantResponseInProgress && !assistantAudioStarted) {
         markAssistantOutputStopped("response_done_without_audio_started");
-      } else if (assistantResponseInProgress) {
+      } else if (!wasAwaitingAssessment && assistantResponseInProgress) {
         scheduleResponseDoneFallback();
       }
 
@@ -1182,6 +1164,28 @@ function handleRealtimeMessage(event) {
             log(`Erro ao parsear argumentos: ${parseErr.message}`, "error");
           }
         }
+        if (wasAwaitingAssessment && item.type === "function_call" && item.name === "assess_interview_answer") {
+          try {
+            const args = JSON.parse(item.arguments || "{}");
+            log(`Avaliação semântica (via response.done): ${JSON.stringify(args)}`, "system");
+            pendingAssessmentArgs = args;
+          } catch (parseErr) {
+            log(`Erro ao parsear avaliação: ${parseErr.message}`, "error");
+          }
+        }
+      }
+
+      if (wasAwaitingAssessment) {
+        const goal = pendingAssessmentInput?.goal || interviewState?.current_goal || "problemas";
+        const assessment = pendingAssessmentArgs || fallbackAssessAnswer(
+          goal,
+          pendingAssessmentInput?.userText || "",
+          interviewState || createInterviewState()
+        );
+        if (!pendingAssessmentArgs) markInternalDecision("assessment_missing_tool_call", { goal });
+        pendingAssessmentArgs = null;
+        pendingAssessmentInput = null;
+        applyAssessment(assessment);
       }
       return;
     }
@@ -1193,13 +1197,10 @@ function handleRealtimeMessage(event) {
         err.code ? `code=${err.code}` : null,
         err.param ? `param=${err.param}` : null
       ].filter(Boolean).join(" | ");
-
       log(`Erro Realtime: ${details || JSON.stringify(err)}`, "error");
     }
   } catch {
-    if (DEBUG_REALTIME) {
-      console.log("Realtime raw:", event.data);
-    }
+    if (DEBUG_REALTIME) console.log("Realtime raw:", event.data);
   }
 }
 

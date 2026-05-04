@@ -4,18 +4,18 @@ const REQUIRED_STABLE_FRAMES = 3;
 const GREETING_COOLDOWN_MS = 25000;
 const GREETING_RESET_EMPTY_MS = 3000;
 const GREETINGS_SINGLE = [
-  "Olá, bem-vindo à Arentia. A Mia já está por aqui.",
-  "Olá, bem-vindo. Entra à vontade, a experiência começa já.",
-  "Olá, ainda bem que chegaste. A Mia está pronta para te receber.",
-  "Bem-vindo à Arentia. Hoje vamos falar um bocadinho sobre inteligência artificial.",
-  "Olá, bom ter-te por cá. Daqui a pouco a Mia conversa contigo."
+  "Olá, bem-vindo à Arentia. A MIA já está por aqui.",
+  "Olá, bem-vindo. Entra à vontade, a conquista do futuro começa já.",
+  "Olá, ainda bem que chegaste. A MIA está pronta para te receber.",
+  "Bem-vindo à Arentia. Hoje juntamos pessoas, cultura e IA.",
+  "Olá, bom ter-te por cá. Daqui a pouco a MIA conversa contigo."
 ];
 const GREETINGS_GROUP = [
-  "Olá, sejam bem-vindos à Arentia. A Mia já está por aqui.",
-  "Bem-vindos. Entrem à vontade, a experiência começa já.",
-  "Olá a todos, ainda bem que chegaram. A Mia está pronta para vos receber.",
-  "Bem-vindos à Arentia. Hoje vamos falar um bocadinho sobre inteligência artificial.",
-  "Olá, bom ter-vos por cá. Daqui a pouco a Mia conversa convosco."
+  "Olá, sejam bem-vindos à Arentia. A MIA já está por aqui.",
+  "Bem-vindos. Entrem à vontade, a conquista do futuro começa já.",
+  "Olá a todos, ainda bem que chegaram. A MIA está pronta para vos receber.",
+  "Bem-vindos à Arentia. Hoje juntamos pessoas, cultura e IA.",
+  "Olá, bom ter-vos por cá. Daqui a pouco a MIA conversa convosco."
 ];
 
 const els = {

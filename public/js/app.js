@@ -1,38 +1,37 @@
 // app.js — Orquestração principal
 
 import {
-  showScreen, hideVideo, setFacePill, setStatePill,
-  setStatus, setRecognizedName, setInterviewStatus,
+  showScreen, setWelcomeName, setDoneName,
   setRegisterPhoto, getRegisterName, clearRegisterName,
-  log, clearLog, buttons
+  log, clearLog, buttons, startParticles, stopParticles
 } from "./ui.js";
 
 import {
   loadModels, loadRegisteredFaces, startCamera, stopCamera,
-  startDetection, stopDetection, capturePhoto, registerFace,
-  getCurrentDescriptor, getCurrentPhoto, getFaceCount, isFacePresent
+  startDetection, stopDetection, registerFace,
+  getCurrentDescriptor, getCurrentPhoto, getFaceCount
 } from "./faceRecognition.js";
 
 import {
   startInterview, stopInterview, getTranscript
 } from "./openaiRealtime.js";
 
-// ── Estado ──────────────────────────────────────────────────────────────────
-let state = "idle";
+// ── Estado ──────────────────────────────────────────────────────
+let state = "entry";
 let currentUser = null;
 let currentDescriptor = null;
 let currentPhoto = null;
 let interviewStartTime = null;
 let currentFaceCount = 0;
+let welcomeTimeout = null;
 
-// ── Inicialização ───────────────────────────────────────────────────────────
+// ── Inicialização ───────────────────────────────────────────────
 function init() {
   clearLog();
   log("App inicializada.", "system");
+  startParticles();
 
-  buttons.startId.addEventListener("click", onStartIdentification);
-  buttons.startInterview.addEventListener("click", onStartInterview);
-  buttons.newUser.addEventListener("click", onNewUser);
+  buttons.enter.addEventListener("click", onEnter);
   buttons.register.addEventListener("click", onRegisterFace);
   buttons.cancelRegister.addEventListener("click", onCancelRegister);
   buttons.stopInterview.addEventListener("click", onStopInterview);
@@ -41,63 +40,59 @@ function init() {
   window.addEventListener("beforeunload", () => {
     stopCamera();
     stopInterview();
+    stopParticles();
   });
 }
 
-// ── Fluxo: Identificação ────────────────────────────────────────────────────
-async function onStartIdentification() {
-  setState("identifying");
+// ── Fluxo: Entrada → Pipeline ───────────────────────────────────
+async function onEnter() {
+  setState("loading");
   clearLog();
-  log("A preparar sistema...", "system");
+  log("A iniciar pipeline...", "system");
 
   try {
-    // 1. Carregar modelos (se ainda não carregados)
     await loadModels();
+    log("Modelos carregados.", "system");
 
-    // 2. Carregar rostos registados
     await loadRegisteredFaces();
 
-    // 3. Ligar câmara
-    setStatus("A alinhar o sistema");
     await startCamera();
+    log("Câmara iniciada.", "system");
 
-    // 4. Iniciar deteção
-    setStatus("A preparar o encontro");
     startDetection(
       (match) => onFaceRecognized(match),
-      () => onFaceLost()
+      () => { /* sem feedback visual */ }
     );
   } catch (err) {
     log(`Erro: ${err.message}`, "error");
-    setStatus(`Erro: ${err.message}`);
     stopCamera();
+    setState("entry");
   }
 }
 
+// ── Reconhecimento ──────────────────────────────────────────────
 function onFaceRecognized(match) {
-  if (state !== "identifying") return;
+  if (state !== "loading") return;
 
-  // Guardar os dados atuais antes de parar deteção
   currentDescriptor = getCurrentDescriptor();
   currentPhoto = getCurrentPhoto();
   currentFaceCount = getFaceCount();
-
   stopDetection();
 
   if (!match) {
     if (currentDescriptor && currentPhoto) {
-      log("Face detetada, mas ainda não reconhecida. Pede o nome para registar.", "system");
+      log("Face detetada, não reconhecida. Pedir nome.", "system");
       setRegisterPhoto(currentPhoto);
       clearRegisterName();
       setState("register");
       return;
     }
 
-    log("Face detetada, mas sem dados suficientes para registar.", "error");
-    setState("identifying");
+    log("Face detetada sem dados suficientes.", "error");
+    setState("loading");
     startDetection(
       (nextMatch) => onFaceRecognized(nextMatch),
-      () => onFaceLost()
+      () => {}
     );
     return;
   }
@@ -108,31 +103,17 @@ function onFaceRecognized(match) {
   };
 
   log(`Utilizador reconhecido: ${match.label} (dist=${match.distance.toFixed(3)})`, "system");
-  setRecognizedName(match.label);
-  setState("recognized");
+  setWelcomeName(match.label);
+  setState("welcome");
+
+  // Auto-avançar para entrevista após 3s
+  if (welcomeTimeout) clearTimeout(welcomeTimeout);
+  welcomeTimeout = setTimeout(() => {
+    onStartInterview();
+  }, 3000);
 }
 
-function onFaceLost() {
-  // Nada especial, continua a procurar
-}
-
-function onNewUser() {
-  // Usar os dados guardados no reconhecimento
-  currentDescriptor = getCurrentDescriptor();
-  currentPhoto = getCurrentPhoto();
-
-  if (!currentDescriptor || !currentPhoto) {
-    log("Ainda não consegui preparar esta sessão. Aproxima-te do ponto de interação.", "error");
-    return;
-  }
-
-  setRegisterPhoto(currentPhoto);
-  clearRegisterName();
-  setState("register");
-  log("Novo utilizador. Preenche o nome.", "system");
-}
-
-// ── Fluxo: Registo ──────────────────────────────────────────────────────────
+// ── Registo ─────────────────────────────────────────────────────
 async function onRegisterFace() {
   const name = getRegisterName();
   if (!name) {
@@ -149,11 +130,15 @@ async function onRegisterFace() {
     log(`A registar ${name}...`, "system");
     const user = await registerFace(name, currentDescriptor, currentPhoto);
     currentUser = user;
-    log(`Registado com sucesso: ${user.name}`, "system");
+    log(`Registado: ${user.name}`, "system");
 
-    // Mostra o ecrã para começar a conversa
-    setRecognizedName(user.name);
-    setState("recognized");
+    setWelcomeName(user.name);
+    setState("welcome");
+
+    if (welcomeTimeout) clearTimeout(welcomeTimeout);
+    welcomeTimeout = setTimeout(() => {
+      onStartInterview();
+    }, 3000);
   } catch (err) {
     log(`Erro no registo: ${err.message}`, "error");
   }
@@ -162,19 +147,21 @@ async function onRegisterFace() {
 function onCancelRegister() {
   currentDescriptor = null;
   currentPhoto = null;
-  setState("identifying");
+  setState("loading");
   startDetection(
     (match) => onFaceRecognized(match),
-    () => onFaceLost()
+    () => {}
   );
 }
 
-// ── Fluxo: Conversa ─────────────────────────────────────────────────────────
+// ── Conversa ────────────────────────────────────────────────────
 async function onStartInterview() {
   if (!currentUser) {
     log("Nenhum utilizador identificado.", "error");
     return;
   }
+
+  if (welcomeTimeout) clearTimeout(welcomeTimeout);
 
   stopDetection();
   stopCamera();
@@ -191,22 +178,22 @@ async function onStartInterview() {
     );
   } catch (err) {
     log(`Erro ao iniciar conversa: ${err.message}`, "error");
-    setState("recognized");
+    setState("entry");
   }
 }
 
 function onStopInterview() {
   stopInterview();
-  log("Conversa interrompida manualmente.", "system");
+  log("Conversa interrompida.", "system");
   currentUser = null;
   currentDescriptor = null;
   currentPhoto = null;
   currentFaceCount = 0;
-  setState("idle");
+  setState("entry");
 }
 
 async function onInterviewComplete(result) {
-  log("Conversa completa! A guardar dados...", "system");
+  log("Conversa completa! A guardar...", "system");
 
   const endedAt = Date.now();
   const durationSeconds = interviewStartTime ? Math.round((endedAt - interviewStartTime) / 1000) : 0;
@@ -242,9 +229,10 @@ async function onInterviewComplete(result) {
     const data = await res.json();
     log(`Conversa guardada: ${data.file}`, "system");
   } catch (err) {
-    log(`Erro ao guardar conversa: ${err.message}`, "error");
+    log(`Erro ao guardar: ${err.message}`, "error");
   }
 
+  setDoneName(currentUser.name);
   setState("done");
 }
 
@@ -254,68 +242,51 @@ function onInterviewError(err) {
   currentDescriptor = null;
   currentPhoto = null;
   currentFaceCount = 0;
-  setState("idle");
+  setState("entry");
 }
 
-// ── Fluxo: Reiniciar ────────────────────────────────────────────────────────
+// ── Reiniciar ───────────────────────────────────────────────────
 function onRestart() {
   currentUser = null;
   currentDescriptor = null;
   currentPhoto = null;
   currentFaceCount = 0;
+  if (welcomeTimeout) clearTimeout(welcomeTimeout);
   stopCamera();
   stopInterview();
-  setState("idle");
+  setState("entry");
   clearLog();
   log("Pronto para nova conversa.", "system");
 }
 
-// ── Gestão de estado ────────────────────────────────────────────────────────
+// ── Gestão de estado ─────────────────────────────────────────────
 function setState(newState) {
   state = newState;
-  document.body.dataset.state = newState;
-
-  // Esconder todos os ecrãs
   showScreen(newState);
 
   switch (newState) {
-    case "idle":
-      hideVideo();
-      setFacePill("Face: ---", "");
-      setStatePill("Inativo", "");
+    case "entry":
+      stopCamera();
       break;
 
-    case "identifying":
-      hideVideo();
-      setFacePill("A preparar...", "");
-      setStatePill("A preparar", "info");
+    case "loading":
+      // Tudo gerido pelo pipeline; sem feedback textual
       break;
 
-    case "recognized":
-      hideVideo();
-      setFacePill("Pronto", "success");
-      setStatePill("Pronto", "success");
+    case "welcome":
+      // Auto-avança via setTimeout em onFaceRecognized
       break;
 
     case "register":
-      hideVideo();
-      setFacePill("Novo utilizador", "warn");
-      setStatePill("Registo", "warn");
       break;
 
     case "interview":
-      hideVideo();
-      setFacePill("Mia", "success");
-      setStatePill("Ativo", "success");
       break;
 
     case "done":
-      hideVideo();
-      setFacePill("---", "");
-      setStatePill("Concluído", "success");
       break;
   }
 }
 
-// ── Arrancar ────────────────────────────────────────────────────────────────
+// ── Arrancar ────────────────────────────────────────────────────
 init();
