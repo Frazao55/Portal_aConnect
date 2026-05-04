@@ -1,0 +1,207 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(34, 197, 94, 0.14), transparent 30%),
+    radial-gradient(circle at 76% 72%, rgba(20, 184, 166, 0.12), transparent 28%),
+    #070a0c;
+  color: #f4fbf7;
+  overflow: hidden;
+}
+
+.greeter-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+}
+
+.welcome-stage {
+  width: min(100%, 980px);
+  min-height: min(760px, calc(100vh - 64px));
+  display: grid;
+  place-items: center;
+  position: relative;
+  isolation: isolate;
+  text-align: center;
+}
+
+.ambient-field {
+  position: absolute;
+  width: min(78vw, 560px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1px solid rgba(216, 247, 232, 0.12);
+  animation: fieldBreathe 4.2s ease-in-out infinite;
+  z-index: -1;
+}
+
+.ambient-field::before,
+.ambient-field::after {
+  content: "";
+  position: absolute;
+  inset: 14%;
+  border-radius: 50%;
+  border: 1px solid rgba(216, 247, 232, 0.1);
+}
+
+.ambient-field::after {
+  inset: 30%;
+  border-color: rgba(34, 197, 94, 0.18);
+}
+
+.ambient-field span {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d8f7e8;
+  box-shadow: 0 0 24px rgba(34, 197, 94, 0.78);
+}
+
+.ambient-field span:nth-child(1) { top: 14%; left: 50%; animation: nodePulse 3.2s ease-in-out infinite; }
+.ambient-field span:nth-child(2) { top: 50%; right: 14%; animation: nodePulse 3.2s ease-in-out 0.4s infinite; }
+.ambient-field span:nth-child(3) { bottom: 14%; left: 50%; animation: nodePulse 3.2s ease-in-out 0.8s infinite; }
+.ambient-field span:nth-child(4) { top: 50%; left: 14%; animation: nodePulse 3.2s ease-in-out 1.2s infinite; }
+
+.brand-lockup {
+  transform: translateY(-22px);
+}
+
+.eyebrow {
+  color: #7ddfaa;
+  font-size: 0.82rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+h1 {
+  font-size: clamp(4.8rem, 16vw, 11rem);
+  line-height: 0.9;
+  letter-spacing: 0;
+  font-weight: 750;
+}
+
+.status-text {
+  color: #a7b7c9;
+  font-size: clamp(1rem, 2vw, 1.25rem);
+  margin-top: 24px;
+}
+
+.presence-orb {
+  position: absolute;
+  bottom: 112px;
+  left: 50%;
+  width: 118px;
+  aspect-ratio: 1;
+  transform: translateX(-50%) scale(0.82);
+  border-radius: 50%;
+  opacity: 0;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 35% 28%, rgba(255,255,255,0.72), transparent 0 15%, transparent 16%),
+    radial-gradient(circle at 50% 50%, #d8f7e8 0 9%, #22c55e 10% 48%, #139f9a 100%);
+  box-shadow:
+    0 0 55px rgba(34, 197, 94, 0.34),
+    0 0 120px rgba(19, 159, 154, 0.18);
+  transition: opacity 0.45s ease, transform 0.55s cubic-bezier(.2,.8,.2,1);
+}
+
+.presence-orb[data-state="awake"],
+.presence-orb[data-state="speaking"] {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
+.presence-orb[data-state="speaking"] {
+  animation: orbTalk 0.9s ease-in-out infinite;
+}
+
+.presence-orb i {
+  width: 6px;
+  height: 34px;
+  display: inline-block;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.75);
+  margin: 0 4px;
+  animation: barTalk 0.86s ease-in-out infinite;
+}
+
+.presence-orb i:nth-child(2) {
+  height: 54px;
+  animation-delay: 0.15s;
+}
+
+.presence-orb i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.start-button,
+.stop-button {
+  position: absolute;
+  bottom: 34px;
+  border: 0;
+  border-radius: 999px;
+  padding: 15px 24px;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  cursor: pointer;
+  transition: transform 0.16s ease, opacity 0.2s ease;
+}
+
+.start-button {
+  background: #d8f7e8;
+  color: #07110c;
+}
+
+.stop-button {
+  background: rgba(255,255,255,0.1);
+  color: #f4fbf7;
+  border: 1px solid rgba(255,255,255,0.16);
+}
+
+.start-button:hover,
+.stop-button:hover {
+  transform: translateY(-1px);
+}
+
+.hidden {
+  display: none !important;
+}
+
+video {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@keyframes fieldBreathe {
+  0%, 100% { transform: scale(0.96) rotate(0deg); opacity: 0.74; }
+  50% { transform: scale(1.04) rotate(18deg); opacity: 1; }
+}
+
+@keyframes nodePulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(0.76); opacity: 0.42; }
+  50% { transform: translate(-50%, -50%) scale(1.22); opacity: 1; }
+}
+
+@keyframes orbTalk {
+  0%, 100% { filter: saturate(1); }
+  50% { filter: saturate(1.28); }
+}
+
+@keyframes barTalk {
+  0%, 100% { transform: scaleY(0.72); opacity: 0.58; }
+  50% { transform: scaleY(1.14); opacity: 1; }
+}

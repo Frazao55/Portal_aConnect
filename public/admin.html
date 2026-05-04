@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin — Pré-registar Utilizador</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #0f0f0f; color: #e0e0e0;
+      min-height: 100vh; padding: 24px;
+    }
+    .container { max-width: 600px; margin: 0 auto; }
+    h1 { color: #fff; margin-bottom: 8px; }
+    .subtitle { color: #888; margin-bottom: 24px; font-size: 0.95rem; }
+
+    .upload-area {
+      border: 2px dashed #444; border-radius: 16px;
+      padding: 40px; text-align: center;
+      margin-bottom: 20px; cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .upload-area:hover, .upload-area.dragover {
+      border-color: #22c55e; background: #1a1a1a;
+    }
+    .upload-area input { display: none; }
+    .upload-area p { color: #888; font-size: 1.1rem; }
+    .upload-area strong { color: #fff; }
+
+    .preview {
+      text-align: center; margin-bottom: 20px;
+    }
+    .preview img {
+      max-width: 200px; max-height: 200px;
+      border-radius: 12px; border: 2px solid #333;
+    }
+    .preview .filename {
+      color: #888; margin-top: 8px; font-size: 0.9rem;
+    }
+
+    .btn {
+      width: 100%; border: 0; border-radius: 12px;
+      padding: 16px; font-size: 1.1rem;
+      cursor: pointer; font-weight: 600;
+      background: #22c55e; color: #000;
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .status-msg {
+      margin-top: 20px; padding: 16px;
+      border-radius: 12px; text-align: center;
+      font-size: 1rem;
+    }
+    .status-msg.success { background: #1a3320; color: #22c55e; }
+    .status-msg.error { background: #331a1a; color: #ef4444; }
+    .status-msg.loading { background: #1a1a33; color: #3b82f6; }
+
+    .back {
+      display: inline-block; margin-top: 24px;
+      color: #888; text-decoration: none; font-size: 0.9rem;
+    }
+    .back:hover { color: #fff; }
+
+    .spinner {
+      display: inline-block; width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.2);
+      border-top-color: #fff; border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: 8px; vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Pré-registar Utilizador</h1>
+    <p class="subtitle">
+      Seleciona uma foto. O nome vem do ficheiro (<code>diogo.jpg</code> &rarr; <strong>Diogo</strong>).<br>
+      A app vai reconhecer esta pessoa automaticamente.
+    </p>
+
+    <div class="upload-area" id="dropZone">
+      <input type="file" id="fileInput" accept=".jpg,.jpeg,.png">
+      <p><strong>Clica aqui</strong> ou arrasta uma foto</p>
+      <p style="font-size: 0.85rem; margin-top: 8px;">.jpg, .jpeg, .png</p>
+    </div>
+
+    <div class="preview" id="preview" style="display:none;">
+      <img id="previewImg" src="" alt="Preview">
+      <div class="filename" id="filename"></div>
+    </div>
+
+    <button class="btn" id="registerBtn" disabled>Registar Utilizador</button>
+
+    <div id="status"></div>
+
+    <a href="/" class="back">&larr; Voltar à app</a>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script>
+    (function() {
+      const MODEL_URL = "/models";
+      let currentFile = null;
+      let modelsReady = false;
+
+      const dropZone = document.getElementById("dropZone");
+      const fileInput = document.getElementById("fileInput");
+      const registerBtn = document.getElementById("registerBtn");
+      const preview = document.getElementById("preview");
+      const previewImg = document.getElementById("previewImg");
+      const filenameEl = document.getElementById("filename");
+      const statusEl = document.getElementById("status");
+
+      // Aguardar que faceapi esteja disponível
+      function waitForFaceApi() {
+        return new Promise((resolve) => {
+          if (typeof faceapi !== "undefined") {
+            resolve();
+            return;
+          }
+          const check = setInterval(() => {
+            if (typeof faceapi !== "undefined") {
+              clearInterval(check);
+              resolve();
+            }
+          }, 100);
+        });
+      }
+
+      async function init() {
+        await waitForFaceApi();
+        console.log("face-api carregado. A carregar modelos...");
+
+        try {
+          await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+          await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+          await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+          modelsReady = true;
+          console.log("Modelos prontos.");
+        } catch (err) {
+          console.error("Erro ao carregar modelos:", err);
+          showStatus("Erro ao carregar modelos de reconhecimento facial. Recarrega a página.", "error");
+        }
+      }
+
+      function showStatus(text, type) {
+        statusEl.className = "status-msg " + type;
+        statusEl.textContent = text;
+        statusEl.style.display = "block";
+      }
+
+      function clearStatus() {
+        statusEl.style.display = "none";
+        statusEl.textContent = "";
+      }
+
+      function filenameToName(filename) {
+        // Remove extensão
+        const base = filename.split(".").slice(0, -1).join(".");
+        // Substitui underscores e hífens por espaços
+        const withSpaces = base.replace(/[_-]/g, " ");
+        // Capitaliza cada palavra
+        return withSpaces
+          .split(" ")
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+          .join(" ");
+      }
+
+      function handleFile(file) {
+        if (!file) return;
+        const ext = file.name.split(".").pop().toLowerCase();
+        if (!["jpg", "jpeg", "png"].includes(ext)) {
+          alert("Formato não suportado. Usa .jpg, .jpeg ou .png");
+          return;
+        }
+
+        currentFile = file;
+        previewImg.src = URL.createObjectURL(file);
+        filenameEl.textContent = file.name + " → " + filenameToName(file.name);
+        preview.style.display = "block";
+        registerBtn.disabled = !modelsReady;
+        clearStatus();
+      }
+
+      // Eventos
+      dropZone.addEventListener("click", () => fileInput.click());
+
+      dropZone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropZone.classList.add("dragover");
+      });
+      dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
+      dropZone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropZone.classList.remove("dragover");
+        if (e.dataTransfer.files.length > 0) {
+          handleFile(e.dataTransfer.files[0]);
+        }
+      });
+
+      fileInput.addEventListener("change", (e) => {
+        if (e.target.files.length > 0) {
+          handleFile(e.target.files[0]);
+        }
+      });
+
+      registerBtn.addEventListener("click", async () => {
+        if (!currentFile) return;
+        if (!modelsReady) {
+          showStatus("Modelos ainda a carregar. Aguarda um momento.", "error");
+          return;
+        }
+
+        registerBtn.disabled = true;
+        showStatus("A processar foto...", "loading");
+
+        try {
+          const name = filenameToName(currentFile.name);
+
+          // Carregar imagem
+          const img = await faceapi.bufferToImage(currentFile);
+          const detection = await faceapi
+            .detectSingleFace(img, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+
+          if (!detection) {
+            throw new Error("Não foi detetada nenhuma face na foto. Tenta outra.");
+          }
+
+          // Criar canvas com apenas a face
+          const canvas = document.createElement("canvas");
+          canvas.width = detection.detection.box.width;
+          canvas.height = detection.detection.box.height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(
+            img,
+            detection.detection.box.x, detection.detection.box.y,
+            detection.detection.box.width, detection.detection.box.height,
+            0, 0, canvas.width, canvas.height
+          );
+
+          // Converter para blob JPEG
+          const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.9));
+
+          // Enviar para o servidor
+          const formData = new FormData();
+          formData.append("name", name);
+          formData.append("descriptor", JSON.stringify(Array.from(detection.descriptor)));
+          formData.append("photo", blob, "face.jpg");
+
+          const res = await fetch("/register-face", { method: "POST", body: formData });
+          const data = await res.json();
+
+          if (!res.ok) {
+            throw new Error(data.error || "Erro do servidor");
+          }
+
+          showStatus(`✅ ${name} registado com sucesso!`, "success");
+          currentFile = null;
+          preview.style.display = "none";
+          registerBtn.disabled = true;
+
+        } catch (err) {
+          showStatus("❌ " + err.message, "error");
+          registerBtn.disabled = false;
+        }
+      });
+
+      // Iniciar
+      init();
+    })();
+  </script>
+</body>
+</html>
