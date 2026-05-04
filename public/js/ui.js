@@ -213,20 +213,17 @@ export function setCameraPreviewStream(stream) {
 export function setPreviewAnalyzing(analyzing) {
   const previewScreen = document.getElementById("screen-preview");
   const btn = document.getElementById("btn-start-conversation");
-  const status = document.getElementById("preview-status");
   const loading = document.getElementById("preview-loading");
 
-  if (!previewScreen || !btn || !status || !loading) return;
+  if (!previewScreen || !btn || !loading) return;
 
   if (analyzing) {
     previewScreen.classList.add("analyzing");
     btn.classList.add("hidden");
-    status.classList.add("hidden");
     loading.classList.remove("hidden");
   } else {
     previewScreen.classList.remove("analyzing");
     btn.classList.remove("hidden");
-    status.classList.remove("hidden");
     loading.classList.add("hidden");
   }
 }

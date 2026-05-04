@@ -170,45 +170,45 @@ h1::after {
   display: none !important;
 }
 
-#screen-preview video {
+#screen-preview > video#mia-preview {
   height: 100%;
   max-width: 100%;
   aspect-ratio: 9 / 16;
   object-fit: cover;
-  opacity: 0.35;
+  opacity: 1; /* Para não parecer grey */
   transition: opacity 0.5s ease;
 }
 
 .camera-pip {
   position: absolute;
-  bottom: 140px;
-  right: 24px;
-  width: 160px;
-  height: 120px;
+  /* Posicionada no canto inferior esquerdo para não estorvar */
+  bottom: 40px;
+  left: 40px;
+  transform: scaleX(-1); /* espelhar e manter do lado esquerdo */
+  width: 240px; /* Maior para uma TV */
+  height: 320px; /* Proporção 3:4 (retrato) */
   object-fit: cover;
-  border-radius: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.65);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  border-radius: 24px; /* Mais arredondado */
+  border: 3px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   background: #111;
   z-index: 3;
-  transform: scaleX(-1); /* espelhar como espelho */
 }
 
 .preview-overlay {
   position: absolute;
   bottom: 40px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: 40px;
+  /* Retirar alinhamento central */
+  transform: none;
+  left: auto;
   z-index: 4;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-end;
   gap: 16px;
-  padding: 20px 32px;
-  border-radius: 20px;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0;
+  background: transparent;
 }
 
 .preview-text {
@@ -246,13 +246,12 @@ h1::after {
 
 /* Estado durante análise - escurecer vídeo */
 #screen-preview.analyzing #mia-preview {
-  opacity: 0.2;
+  opacity: 0.6;
   transition: opacity 0.5s ease;
 }
 
 /* Esconder overlay durante transição para interview */
-#screen-preview.interviewing .preview-overlay,
-#screen-preview.analyzing .preview-overlay {
+#screen-preview.interviewing .preview-overlay {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.5s ease;
@@ -476,18 +475,16 @@ button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 }
 
 body[data-mia-presence="speaking"] #screen-interview video,
-body[data-mia-presence="listening"] #screen-interview video {
+body[data-mia-presence="listening"] #screen-interview video,
+body[data-mia-presence="connecting"] #screen-interview video,
+body[data-mia-presence="thinking"] #screen-interview video {
   opacity: 1;
 }
 
-body[data-mia-presence="connecting"] #screen-interview video,
-body[data-mia-presence="thinking"] #screen-interview video {
-  opacity: 0.35;
-}
-
 body[data-mia-presence="speaking"] #screen-interview video {
-  box-shadow: inset 0 0 0 6px rgba(220, 38, 38, 0.4);
-  animation: speakRingVideo 1.4s ease-in-out infinite;
+  /* Substituí a borda grossa e vermelha que piscava por apenas a cor natural do vídeo,
+     com um brilho branco *muito* ligeiro nas laterais, para não interferir na imagem. */
+  box-shadow: inset 0 -20px 60px rgba(255, 255, 255, 0.05);
 }
 
 #screen-interview::after {
@@ -502,14 +499,12 @@ body[data-mia-presence="speaking"] #screen-interview video {
   pointer-events: none;
 }
 
-@keyframes speakRingVideo {
-  0%, 100% { box-shadow: inset 0 0 0 6px rgba(220, 38, 38, 0.4); }
-  50%      { box-shadow: inset 0 0 0 18px rgba(220, 38, 38, 0.08); }
-}
+/* Animação removida pois era muito intrusiva */
 
 .mia-stage {
   position: absolute;
-  bottom: 100px;
+  /* Descemos o robô para mais perto do rodapé, em vez de pairar no meio da barriga/cara */
+  bottom: 90px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 3;
@@ -517,18 +512,19 @@ body[data-mia-presence="speaking"] #screen-interview video {
 }
 
 .voice-orb {
-  width: 64px;
+  width: 54px; /* Mais pequeno e elegante */
   aspect-ratio: 1;
   border-radius: 50%;
   position: relative;
   display: grid;
   place-items: center;
+  /* Mudança para uma cor mais limpa: Branco / Cinza claro (simulando "Siri" ou assistentes neutros) em vez de vermelho alarme */
   background:
-    radial-gradient(circle at 35% 28%, rgba(255,255,255,0.85), transparent 0 14%, transparent 15%),
-    radial-gradient(circle at 50% 50%, #dc2626 0 38%, #991b1b 56%, #7f1d1d 100%);
+    radial-gradient(circle at 35% 28%, rgba(255,255,255,0.9), transparent 0 14%, transparent 15%),
+    radial-gradient(circle at 50% 50%, #ffffff 0 38%, #e5e5e5 56%, #cccccc 100%);
   box-shadow:
-    0 0 30px rgba(220, 38, 38, 0.28),
-    0 0 70px rgba(153, 27, 27, 0.18);
+    0 0 20px rgba(255, 255, 255, 0.4),
+    0 0 60px rgba(255, 255, 255, 0.15);
   animation: orbPulse 2.2s ease-in-out infinite;
   opacity: 0;
   transform: scale(0.72);
@@ -567,20 +563,20 @@ body[data-mia-presence="speaking"] #screen-interview video {
   position: absolute;
   inset: -14px;
   border-radius: 50%;
-  border: 1px solid rgba(0,0,0,0.08);
+  border: 1px solid rgba(255,255,255,0.2); /* Em vez de bordo escuro, brilho esbatido branco */
   animation: ringPulse 2.4s ease-out infinite;
 }
 
 .voice-orb::after {
-  inset: -34px;
+  inset: -28px;
   animation-delay: 0.55s;
 }
 
 .voice-orb span {
   width: 4px;
-  height: 20px;
+  height: 16px;
   border-radius: 999px;
-  background: rgba(255,255,255,0.85);
+  background: rgba(0, 0, 0, 0.4); /* Traços internos mais escuros para constrastarem na bola branca */
   margin: 0 2px;
   display: inline-block;
   animation: barTalk 0.92s ease-in-out infinite;
@@ -720,14 +716,15 @@ body:not([data-debug="true"]) .log-container {
 
 .interview-status {
   position: absolute;
-  bottom: 122px;
+  /* Descemos o texto de status para acompanhar o novo orb */
+  bottom: 154px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 4;
   text-align: center;
-  font-size: 1rem;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
   min-height: 24px;
   transition: color 0.3s ease;
   pointer-events: none;
@@ -735,6 +732,5 @@ body:not([data-debug="true"]) .log-container {
 }
 
 body[data-mia-presence="speaking"] .interview-status {
-  color: #ff6b6b;
-  font-weight: 500;
+  color: rgba(255, 255, 255, 0.9);
 }
