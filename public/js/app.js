@@ -281,12 +281,19 @@ function onRestart() {
   currentPhoto = null;
   currentFaceCount = 0;
   if (welcomeTimeout) clearTimeout(welcomeTimeout);
+  
   stopCamera();
   stopInterview();
+  
+  // Garantir que a UI e textos voltam ao estado base antes da câmara
+  setPreviewAnalyzing(false); 
   showPreviewOverlay();
-  setState("preview");
+  
   clearLog();
   log("Pronto para nova conversa.", "system");
+
+  // Re-iniciar o ecrã inicial de novo
+  startPreview();
 }
 
 // ── Gestão de estado ─────────────────────────────────────────────
