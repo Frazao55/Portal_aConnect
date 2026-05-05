@@ -142,32 +142,7 @@ app.get("/token", async (req, res) => {
           type: "realtime",
           model: "gpt-realtime",
           instructions: MIA_SESSION_INSTRUCTIONS,
-          tools: [
-            {
-              type: "function",
-              name: "submit_interview",
-              description: "Submeter respostas quando a conversa estiver completa",
-              parameters: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  ambiente: {
-                    type: "string",
-                    description: "Área, momento ou contexto dentro da empresa mencionado pela pessoa"
-                  },
-                  problemas: {
-                    type: "string",
-                    description: "Tarefa, processo ou problema concreto do dia a dia na empresa que a pessoa gostava que a IA ajudasse a resolver ou automatizar"
-                  },
-                  visao_futuro: {
-                    type: "string",
-                    description: "Visão da pessoa sobre o futuro da IA na Arentia, nas equipas, processos ou forma de trabalhar"
-                  }
-                },
-                required: ["ambiente", "problemas", "visao_futuro"]
-              }
-            }
-          ],
+          tools: [],
           audio: {
             output: {
               voice: "marin"

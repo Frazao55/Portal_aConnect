@@ -19,7 +19,7 @@ let nextAssistantStep = "greeting";
 let interviewState = null;
 let assistantResponseInProgress = false;
 let assistantAudioStarted = false;
-let pendingUserTranscript = null;
+let pendingUserTranscripts = [];
 let ignoredInputItemIds = new Set();
 let responseDoneFallbackTimer = null;
 let iceDisconnectedTimer = null;
@@ -45,6 +45,7 @@ function createInterviewState() {
     visao_futuro: null,
     current_goal: SOCIAL_STEP,
     attempts_per_goal: { problemas: 0, visao_futuro: 0 },
+    clarifications_per_goal: { problemas: 0, visao_futuro: 0 },
     unspecified_fields: []
   };
 }
@@ -60,7 +61,7 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
   interviewState = createInterviewState();
   assistantResponseInProgress = false;
   assistantAudioStarted = false;
-  pendingUserTranscript = null;
+  pendingUserTranscripts = [];
   ignoredInputItemIds = new Set();
   awaitingAssessment = false;
   pendingAssessmentArgs = null;
@@ -150,7 +151,11 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
 
     log("[realtime] a pedir microfone...", "system");
     localStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true
+      },
       video: false
     });
     log(`[realtime] microfone obtido, tracks=${localStream.getAudioTracks().length}`, "system");
@@ -325,33 +330,6 @@ function setLocalAudioEnabled(enabled) {
   });
 }
 
-function buildSubmitInterviewTool() {
-  return {
-    type: "function",
-    name: "submit_interview",
-    description: "Submeter respostas quando a conversa estiver completa",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        ambiente: {
-          type: "string",
-          description: "Área, momento ou contexto dentro da empresa mencionado pela pessoa"
-        },
-        problemas: {
-          type: "string",
-          description: "Tarefa, processo ou problema concreto do dia a dia na empresa que a pessoa gostava que a IA ajudasse a resolver ou automatizar"
-        },
-        visao_futuro: {
-          type: "string",
-          description: "Visão da pessoa sobre o futuro da IA na Arentia, nas equipas, processos ou forma de trabalhar"
-        }
-      },
-      required: ["ambiente", "problemas", "visao_futuro"]
-    }
-  };
-}
-
 function buildAssessAnswerTool() {
   return {
     type: "function",
@@ -381,7 +359,7 @@ function buildAssessAnswerTool() {
         },
         normalized_value: {
           type: "string",
-          description: "Síntese curta, limpa e fiel. Usar 'não especificado' se accepted=false"
+          description: "Síntese curta, limpa e fiel. Se accepted=false, usar 'não especificado' salvo quando a resposta contenha uma pista útil para outro campo"
         },
         needs_clarification: {
           type: "boolean",
@@ -427,8 +405,14 @@ function wordCount(text) {
   return normalized ? normalized.split(" ").length : 0;
 }
 
-function hasAny(normalizedText, terms) {
-  return terms.some((term) => normalizedText.includes(term));
+function hasAnyWord(normalizedText, terms) {
+  const words = new Set(normalizedText.split(/\s+/).filter(Boolean));
+  return terms.some((term) => {
+    const normalizedTerm = normalizeText(term);
+    if (!normalizedTerm) return false;
+    if (normalizedTerm.includes(" ")) return normalizedText.includes(normalizedTerm);
+    return words.has(normalizedTerm);
+  });
 }
 
 function pickVariant(options, seed = "") {
@@ -445,7 +429,7 @@ function pickVariant(options, seed = "") {
 
 function looksReadyToStart(text) {
   const normalized = normalizeText(text);
-  return hasAny(normalized, [
+  return hasAnyWord(normalized, [
     "sim", "estou", "pronto", "pronta", "podemos", "vamos",
     "forca", "claro", "ok", "bora", "pode ser"
   ]);
@@ -453,7 +437,7 @@ function looksReadyToStart(text) {
 
 function wantsToSkipSmallTalk(text) {
   const normalized = normalizeText(text);
-  return hasAny(normalized, [
+  return hasAnyWord(normalized, [
     "avancar", "avanca", "vamos ao que interessa", "sem conversa",
     "nao tenho tempo", "tenho pressa", "salta"
   ]);
@@ -466,28 +450,16 @@ function isVagueAnswer(text, goal) {
 
   if (/^[^\p{L}\p{N}]*$/u.test(text || "")) return true;
   if (/^[^\p{Script=Latin}\p{N}]+$/u.test(normalized)) return true;
-  if (hasAny(normalized, ["gut"])) return true;
+  if (hasAnyWord(normalized, ["gut"])) return true;
 
   const vagueExact = new Set([
     "nao sei", "nao faco ideia", "sem ideia", "qualquer coisa",
     "tanto faz", "depende", "talvez", "sim", "nao", "ok", "pois", "isso", "nada", "normal"
   ]);
   if (vagueExact.has(normalized)) return true;
-  if (words <= 2 && hasAny(normalized, ["nao sei", "talvez", "depende", "normal", "melhor"])) return true;
+  if (words <= 2 && hasAnyWord(normalized, ["nao sei", "talvez", "depende", "normal", "melhor"])) return true;
   if (goal === "visao_futuro" && normalized.includes("vai ser melhor") && words <= 4) return true;
   return false;
-}
-
-function looksLikeAmbiente(text) {
-  const normalized = normalizeText(text);
-  return hasAny(normalized, [
-    "trabalho", "empresa", "escritorio", "cliente", "clientes", "equipa",
-    "departamento", "arentia", "reunioes", "processos", "dia a dia profissional",
-    "emails", "email", "mail", "mails", "documentos", "tarefas", "relatorios", "dados",
-    "software", "programacao", "desenvolvimento", "informatica", "tecnologia",
-    "chatgpt", "ia", "inteligencia artificial", "fim do dia", "fechar o dia",
-    "ir embora", "final do dia", "manha", "tarde"
-  ]);
 }
 
 function markInternalDecision(type, details = {}) {
@@ -507,13 +479,18 @@ function nextGoalAfter(goal) {
 }
 
 function setGoalAsUnspecified(goal, state) {
+  const attempts = state.attempts_per_goal[goal] || 0;
+  const clarifications = state.clarifications_per_goal[goal] || 0;
   state[goal] = "não especificado";
+  state.attempts_per_goal[goal] = 0;
+  state.clarifications_per_goal[goal] = 0;
   if (!state.unspecified_fields.includes(goal)) {
     state.unspecified_fields.push(goal);
   }
   markInternalDecision("fallback_after_attempts", {
     goal,
-    attempts: state.attempts_per_goal[goal]
+    attempts,
+    clarifications
   });
 }
 
@@ -552,6 +529,7 @@ function acceptField(goal, value, state, raw = "") {
   const cleanValue = polishAcceptedValue(goal, value) || "não especificado";
   state[goal] = cleanValue;
   state.attempts_per_goal[goal] = 0;
+  state.clarifications_per_goal[goal] = 0;
   markInternalDecision(`accepted_${goal}`, {
     value: cleanValue,
     raw: (raw || value || "").trim() || "<vazio>"
@@ -565,7 +543,7 @@ function canFinishInterview(state) {
 function processUserTranscript(text) {
   if (!interviewState) interviewState = createInterviewState();
   if (awaitingAssessment) {
-    pendingUserTranscript = text;
+    pendingUserTranscripts.push(text);
     markInternalDecision("queued_user_transcript_during_assessment", {
       text: text || "<vazio>",
       goal: interviewState.current_goal
@@ -629,9 +607,8 @@ function processUserTranscript(text) {
 }
 
 function processPendingTranscriptIfReady() {
-  if (assistantResponseInProgress || !pendingUserTranscript) return;
-  const text = pendingUserTranscript;
-  pendingUserTranscript = null;
+  if (assistantResponseInProgress || pendingUserTranscripts.length === 0) return;
+  const text = pendingUserTranscripts.shift();
   markInternalDecision("processed_pending_transcript", { text });
   processUserTranscript(text);
 }
@@ -658,7 +635,6 @@ function buildAssessmentPrompt(goal, userText) {
     `Campo atual: ${goal} (${fieldLabel}).`,
     `Resposta da pessoa a avaliar: ${userText || "<vazio>"}`,
     "Campos já recolhidos:",
-    `ambiente: ${state.ambiente || "não especificado"}`,
     `problemas: ${state.problemas || "em falta"}`,
     `visao_futuro: ${state.visao_futuro || "em falta"}`,
     "Histórico recente:",
@@ -670,6 +646,7 @@ function buildAssessmentPrompt(goal, userText) {
     "Não aceites 'não sei', 'boa questão mas não sei' ou equivalentes como resposta útil.",
     "Para problemas, avalia se a resposta identifica um problema, tarefa ou processo que a IA poderia resolver ou automatizar.",
     "Para visao_futuro, avalia se a resposta descreve uma expectativa para o futuro da IA na Arentia, mesmo que mencione o problema anterior.",
+    "Se a resposta responder claramente a outro campo que não o atual, accepted=false, mas conserva a pista em normalized_value.",
     "Se a resposta for curta mas útil no contexto, como 'marcações' para problema, aceita.",
     "normalized_value deve ser uma síntese curta, limpa e útil para análise posterior; nunca uma transcrição literal quebrada.",
     "Usa linguagem profissional e suave: prefere 'apoiar', 'coordenar', 'automatizar', 'simplificar' e 'libertar equipas'.",
@@ -741,6 +718,9 @@ function applyAssessment(rawAssessment) {
   const normalizedValue = (rawAssessment?.normalized_value || "").trim();
   const userText = (rawAssessment?.userText || "").trim();
   const state = interviewState;
+  if (!state.clarifications_per_goal) {
+    state.clarifications_per_goal = { problemas: 0, visao_futuro: 0 };
+  }
 
   awaitingAssessment = false;
 
@@ -782,14 +762,22 @@ function applyAssessment(rawAssessment) {
     state.attempts_per_goal[goal] += 1;
   }
 
+  if (answerType !== "skip") {
+    state.clarifications_per_goal[goal] = (state.clarifications_per_goal[goal] || 0) + 1;
+  }
+
   markInternalDecision("needs_clarification", {
     goal,
     answerType,
     attempt: state.attempts_per_goal[goal],
+    clarification: state.clarifications_per_goal[goal],
     text: userText || "<vazio>"
   });
 
-  if (state.attempts_per_goal[goal] >= MAX_ATTEMPTS_PER_GOAL) {
+  if (
+    state.attempts_per_goal[goal] >= MAX_ATTEMPTS_PER_GOAL ||
+    state.clarifications_per_goal[goal] >= MAX_ATTEMPTS_PER_GOAL
+  ) {
     setGoalAsUnspecified(goal, state);
     const nextGoal = canFinishInterview(state)
       ? "close"
@@ -840,9 +828,11 @@ function buildResponsePrompt(step, userText = "", decision = null) {
   const attempt = state.current_goal && state.attempts_per_goal[state.current_goal]
     ? state.attempts_per_goal[state.current_goal]
     : 0;
-  const includeExample = decision?.reason === "needs_example" || attempt >= 2;
+  const clarification = state.current_goal && state.clarifications_per_goal?.[state.current_goal]
+    ? state.clarifications_per_goal[state.current_goal]
+    : 0;
+  const includeExample = decision?.reason === "needs_example" || attempt >= 1 || clarification >= 1;
   const collected = [
-    `ambiente: ${state.ambiente || "não especificado"}`,
     `problema: ${state.problemas || "em falta"}`,
     `visão de futuro: ${state.visao_futuro || "em falta"}`
   ].join("\n");
@@ -854,12 +844,12 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     `Evento: ${MIA_EVENT_NAME}.`,
     "Objetivo da experiência: criar conforto primeiro e depois recolher duas ideias úteis sobre IA na Arentia.",
     "As duas respostas finais são: 1) que problema, tarefa ou processo no dia a dia da Arentia a IA podia ajudar a resolver ou automatizar; 2) como a pessoa imagina a IA no futuro da Arentia.",
-    "Não uses 'a Mia pode ser útil', 'a Mia devia ajudar', 'posso fazer-te', 'gostava de te fazer' nem 'duas perguntas rápidas'.",
-    "Quando falares do tema, diz sempre 'a IA', 'uma IA' ou 'inteligência artificial', nunca 'a Mia'.",
-    "Máximo uma pergunta por resposta.",
-    "O frontend decide quando há dados suficientes. Não digas que vais avançar por tua iniciativa.",
-    "Só podes chamar submit_interview quando uma tool submit_interview estiver disponível e o prompt pedir explicitamente para fechar.",
-    "Só podes chamar assess_interview_answer em respostas silenciosas de avaliação; nunca durante o fecho.",
+    "Fala de forma natural, curta e humana, como numa conversa de evento.",
+    "Faz no máximo uma pergunta por resposta.",
+    "Quando falares do tema, usa 'a IA', 'uma IA' ou 'inteligência artificial'.",
+    "Segue apenas o objetivo atual, sem antecipar a próxima fase.",
+    "Podes fazer uma micro-reação de no máximo uma frase antes da pergunta, ligada ao que a pessoa disse.",
+    "Varia ligeiramente a formulação para não soar a formulário.",
     "Dados recolhidos até agora:",
     collected
   ];
@@ -892,13 +882,13 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       "QUEBRA-GELO:",
       "Esta fase é só acolhimento. Ainda não recolhas dados sobre IA nem sobre trabalho.",
       "Responde de forma curta e natural ao que a pessoa disse.",
-      "Depois faz uma única pergunta leve e humana.",
+      "Depois faz uma única pergunta leve e humana, adaptada ao momento.",
       isGroup
-        ? "Exemplo: \"Antes de começarmos a sério, digam-me uma coisa: chegaram cá hoje com que ânimo?\""
+        ? "Possíveis temas: como chegaram hoje, que energia trazem, o que esperam do evento ou que palavra descreve o dia."
         : hasName
-          ? `Exemplo: \"Diz-me, ${currentUserName}: chegaste cá hoje com que ânimo?\"`
-          : "Exemplo: \"Diz-me uma coisa: chegaste cá hoje com que ânimo?\"",
-      "Usa a pergunta do ânimo como opção principal. Só varia se fizer mesmo sentido no momento.",
+          ? `Possíveis temas: como chegaste hoje, que energia trazes, o que esperas do evento ou que palavra descreve o teu dia, ${currentUserName}.`
+          : "Possíveis temas: como chegaste hoje, que energia trazes, o que esperas do evento ou que palavra descreve o teu dia.",
+      "Escolhe uma formulação tua. Não uses sempre a pergunta do ânimo.",
       "Se a pessoa estiver sem vontade de conversa fiada, diz algo como: \"Boa, vamos diretos ao assunto.\"",
       "Não expliques ainda o objetivo da experiência."
     ].join("\n").trim();
@@ -908,18 +898,18 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     return [
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
-      "OBJETIVO ATUAL: PRIMEIRA PERGUNTA PRINCIPAL, PROBLEMA CONCRETO.",
+      "OBJETIVO ATUAL: descobrir uma tarefa, problema ou processo concreto do dia a dia da Arentia que a IA podia ajudar a resolver ou automatizar.",
       decision?.reason === "social_done" || decision?.reason === "skip_small_talk"
-        ? "Começa com uma transição curta e neutra do quebra-gelo para a primeira pergunta principal. Se a pessoa trouxe um tema lateral, não alimentes esse tema."
+        ? "Faz uma transição curta e natural do quebra-gelo para a primeira pergunta principal. Se a pessoa trouxe um tema lateral, não alimentes esse tema."
         : "Se a resposta anterior já trouxe contexto útil, reconhece-o numa frase curta antes de perguntar.",
-      "Para off-topic, usa algo como: \"Boa, guardamos isso para depois. Agora vou puxar-te para a primeira pergunta.\"",
-      "Pergunta de forma independente que problema, tarefa ou processo do dia a dia da Arentia a IA poderia ajudar a resolver ou automatizar.",
+      "Formula a pergunta com palavras tuas, sem soar a questionário.",
+      "Pergunta de forma independente por um problema, tarefa ou processo concreto.",
       isGroup
-        ? "Pergunta: \"No vosso dia a dia na Arentia, que problema, tarefa ou processo gostavam que a IA ajudasse a resolver ou automatizar?\""
-        : "Pergunta: \"No teu dia a dia na Arentia, que problema, tarefa ou processo gostavas que a IA ajudasse a resolver ou automatizar?\"",
-      "Exemplos de ajuda: organizar tarefas, responder ou resumir emails, resumir documentos, preparar relatórios, preencher dados, apoiar clientes, procurar informação interna.",
+        ? "Fala para o grupo, mas pede uma ideia concreta."
+        : "Fala diretamente com a pessoa e pede uma ideia concreta.",
+      "Podes dar 2 ou 3 exemplos simples se ajudar: emails, relatórios, documentos, tarefas repetitivas, dados ou apoio a clientes.",
       "Se a pessoa responder só com uma palavra mas ela fizer sentido no contexto, como 'marcações', aceita e avança.",
-      "A resposta tem de permitir preencher um problema concreto do dia a dia na empresa.",
+      "Mantém a resposta curta e faz só uma pergunta.",
       "Não perguntes ainda pela visão de futuro."
     ].join("\n").trim();
   }
@@ -928,12 +918,12 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     return [
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
-      "OBJETIVO ATUAL: SEGUNDA PERGUNTA PRINCIPAL, VISÃO DE FUTURO DA ARENTIA.",
-      "Faz uma transição curta: reconhece o problema registado, mas deixa claro que agora a pergunta é mais ampla.",
+      "OBJETIVO ATUAL: perceber como a pessoa imagina a IA no futuro da Arentia.",
+      "Faz uma transição curta: reage ao problema registado e abre a pergunta para uma visão mais ampla.",
       "Usa a versão normalizada do problema, não a transcrição bruta.",
-      "Pergunta como a pessoa imagina a IA no futuro da Arentia: nas equipas, nos processos ou na forma de trabalhar.",
-      `Exemplo: "Boa. Agora olhando para a Arentia daqui a uns anos: como imaginas que a IA pode ajudar as equipas, os processos ou a forma de trabalhar?"`,
-      "A resposta deve capturar uma visão ou expectativa para a Arentia, não apenas para o problema anterior.",
+      "Pergunta de forma aberta como a IA pode ajudar equipas, processos ou a forma de trabalhar daqui para a frente.",
+      "Varia a formulação e não repitas sempre o exemplo de 'daqui a uns anos'.",
+      "Mantém a resposta curta e faz só uma pergunta.",
       "Não feches a conversa nesta fala."
     ].join("\n").trim();
   }
@@ -980,7 +970,6 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     "Todos os campos já foram preenchidos ou marcados como não especificado pelo frontend.",
     "Usa apenas os valores limpos nos campos recolhidos. Nunca repitas transcrições brutas ou frases quebradas da pessoa.",
     `Valores que serão guardados automaticamente pelo frontend:
-ambiente: ${state.ambiente || "não especificado"}
 problemas: ${state.problemas || "não especificado"}
 visao_futuro: ${state.visao_futuro || "não especificado"}`,
     "Não chames nenhuma função.",
@@ -1033,7 +1022,7 @@ function sendAssistantResponse(step, userText = "", decision = null) {
     type: "response.create",
     response: {
       output_modalities: ["audio"],
-      tools: step === "close" ? [] : [buildAssessAnswerTool(), buildSubmitInterviewTool()],
+      tools: [],
       instructions: buildResponsePrompt(step, userText, decision)
     }
   });
@@ -1076,6 +1065,7 @@ function completeInterview(args) {
       warmup_done: interviewState.warmup_done,
       current_goal: interviewState.current_goal,
       attempts_per_goal: { ...interviewState.attempts_per_goal },
+      clarifications_per_goal: { ...interviewState.clarifications_per_goal },
       unspecified_fields: [...interviewState.unspecified_fields]
     }
   };
@@ -1158,7 +1148,7 @@ function handleRealtimeMessage(event) {
       }
       if (completed) return;
       if (assistantResponseInProgress) {
-        pendingUserTranscript = text;
+        pendingUserTranscripts.push(text);
         markInternalDecision("queued_user_transcript", {
           text: text || "<vazio>",
           nextAssistantStep
@@ -1177,17 +1167,6 @@ function handleRealtimeMessage(event) {
       if (text) {
         log(`IA: ${text}`, "assistant");
         transcript.push({ role: "assistant", text, time: new Date().toISOString() });
-      }
-      return;
-    }
-
-    if (msg.type === "response.function_call_arguments.done" && msg.name === "submit_interview") {
-      try {
-        const args = JSON.parse(msg.arguments || "{}");
-        log(`Dados recebidos: ${JSON.stringify(args)}`, "system");
-        completeInterview(args);
-      } catch (parseErr) {
-        log(`Erro ao parsear argumentos: ${parseErr.message}`, "error");
       }
       return;
     }
@@ -1223,15 +1202,6 @@ function handleRealtimeMessage(event) {
       }
 
       for (const item of msg.response.output) {
-        if (item.type === "function_call" && item.name === "submit_interview") {
-          try {
-            const args = JSON.parse(item.arguments || "{}");
-            log(`Dados recebidos (via response.done): ${JSON.stringify(args)}`, "system");
-            completeInterview(args);
-          } catch (parseErr) {
-            log(`Erro ao parsear argumentos: ${parseErr.message}`, "error");
-          }
-        }
         if (wasAwaitingAssessment && item.type === "function_call" && item.name === "assess_interview_answer") {
           if (pendingAssessmentArgs) continue;
           try {

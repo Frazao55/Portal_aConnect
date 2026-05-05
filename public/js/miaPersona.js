@@ -21,6 +21,5 @@ export const MIA_BASE_PERSONA = [
 
 export const MIA_SESSION_INSTRUCTIONS = [
   MIA_BASE_PERSONA,
-  "Segue as instruções específicas de cada resposta.",
-  "Usa a função submit_interview apenas quando a conversa estiver completa e o prompt de fecho o pedir."
+  "Segue as instruções específicas de cada resposta."
 ].join("\n");
