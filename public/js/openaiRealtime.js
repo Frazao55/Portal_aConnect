@@ -1,7 +1,7 @@
 // openaiRealtime.js — Integração WebRTC com OpenAI Realtime API
 
 import { setInterviewTimer, log, setMiaPresence } from "./ui.js";
-import { MIA_BASE_PERSONA, MIA_EVENT_NAME } from "./miaPersona.js";
+import { MIA_BASE_PERSONA, MIA_EVENT_NAME, MIA_EVENT_SPOKEN_NAME } from "./miaPersona.js";
 
 let pc = null;
 let dc = null;
@@ -32,21 +32,67 @@ const MAX_ATTEMPTS_PER_GOAL = 2;
 const RESPONSE_DONE_AUDIO_FALLBACK_MS = 30000;
 const ICE_DISCONNECTED_GRACE_MS = 5000;
 const INTERVIEW_GOALS = ["problemas", "visao_futuro"];
+const CONTEXT_GOALS = ["area"];
+const ASSESSABLE_GOALS = [...CONTEXT_GOALS, ...INTERVIEW_GOALS];
 const SOCIAL_STEP = "event_context";
 const EVENT_EXPECTATION_STEP = "quebra_gelo";
 const NON_PENALIZING_ANSWER_TYPES = new Set(["confirmation_only", "question_back", "smalltalk", "skip"]);
 const PENALIZING_ANSWER_TYPES = new Set(["dont_know", "noise"]);
 const DEBUG_REALTIME = new URLSearchParams(window.location.search).get("debug") === "1";
 
+const ARENTIA_AREAS = {
+  ti: {
+    label: "TI - Tecnologias de Informação",
+    keywords: ["ti", "tecnologias de informacao", "infraestrutura", "redes", "servidores", "seguranca", "postos de trabalho", "suporte tecnico", "comunicacoes", "backups", "salvaguarda"],
+    examples: ["pedidos de suporte", "gestão de tickets", "monitorização de servidores", "segurança e backups", "documentação técnica", "diagnóstico de problemas em redes ou postos de trabalho"]
+  },
+  primavera: {
+    label: "Cegid Primavera",
+    keywords: ["primavera", "cegid primavera", "erp primavera"],
+    examples: ["parametrizações", "levantamento de requisitos", "formação de utilizadores", "suporte funcional", "documentação de processos", "apoio a clientes"]
+  },
+  phc: {
+    label: "Cegid PHC",
+    keywords: ["phc", "cegid phc", "enterprise partner"],
+    examples: ["implementações PHC", "parametrizações", "suporte funcional", "levantamento de necessidades", "automatização de processos de gestão", "apoio a clientes"]
+  },
+  industria: {
+    label: "Indústria",
+    keywords: ["industria", "producao", "logistica", "chao de fabrica", "fabrica", "ordens de fabrico", "stocks"],
+    examples: ["planeamento de produção", "controlo de stocks", "ordens de fabrico", "logística", "integração com o chão de fábrica", "análise de dados industriais"]
+  },
+  id: {
+    label: "I&D - Investigação e Desenvolvimento",
+    keywords: ["i&d", "id", "investigacao e desenvolvimento", "desenvolvimento", "software", "programacao", "dev", "desenvolvedor", "developer"],
+    examples: ["análise de requisitos", "desenvolvimento de software", "testes", "documentação técnica", "integração entre sistemas", "automatização de tarefas repetitivas no desenvolvimento"]
+  },
+  comercial: {
+    label: "Comercial",
+    keywords: ["comercial", "vendas", "propostas", "negocios", "clientes", "leads", "oportunidades"],
+    examples: ["preparação de propostas", "seguimento de oportunidades", "resumo de reuniões com clientes", "organização de leads", "análise de necessidades", "emails comerciais"]
+  },
+  gao: {
+    label: "GAO",
+    keywords: ["gao", "gestao de pessoas", "rh", "recursos humanos", "marketing", "servicos partilhados", "sig", "qualidade", "contabilidade", "faturacao", "certificacoes"],
+    examples: ["processos internos", "faturação", "contabilidade", "comunicação interna", "marketing", "gestão de pessoas", "qualidade e melhoria contínua"]
+  },
+  administracao: {
+    label: "Administração e CEO",
+    keywords: ["administracao", "ceo", "direcao", "lideranca", "estrategia", "administracao e ceo"],
+    examples: ["análise de indicadores", "apoio à decisão", "priorização de iniciativas", "resumos executivos", "acompanhamento de objetivos", "visão estratégica da empresa"]
+  }
+};
+
 function createInterviewState() {
   return {
     warmup_done: false,
     ambiente: "não especificado",
+    area: null,
     problemas: null,
     visao_futuro: null,
     current_goal: SOCIAL_STEP,
-    attempts_per_goal: { problemas: 0, visao_futuro: 0 },
-    clarifications_per_goal: { problemas: 0, visao_futuro: 0 },
+    attempts_per_goal: { area: 0, problemas: 0, visao_futuro: 0 },
+    clarifications_per_goal: { area: 0, problemas: 0, visao_futuro: 0 },
     unspecified_fields: []
   };
 }
@@ -342,7 +388,7 @@ function buildAssessAnswerTool() {
       properties: {
         goal: {
           type: "string",
-          enum: INTERVIEW_GOALS,
+          enum: ASSESSABLE_GOALS,
           description: "Campo atualmente em avaliação"
         },
         userText: {
@@ -414,6 +460,34 @@ function hasAnyWord(normalizedText, terms) {
     if (normalizedTerm.includes(" ")) return normalizedText.includes(normalizedTerm);
     return words.has(normalizedTerm);
   });
+}
+
+function detectArentiaArea(text) {
+  const normalized = normalizeText(text);
+
+  for (const [key, area] of Object.entries(ARENTIA_AREAS)) {
+    if (area.keywords.some((keyword) => normalized.includes(normalizeText(keyword)))) {
+      return key;
+    }
+  }
+
+  return null;
+}
+
+function getCurrentAreaProfile(state = interviewState) {
+  const areaKey = state?.area;
+  if (!areaKey || !ARENTIA_AREAS[areaKey]) return null;
+  return ARENTIA_AREAS[areaKey];
+}
+
+function getAreaExamplesText(state = interviewState) {
+  const profile = getCurrentAreaProfile(state);
+
+  if (!profile) {
+    return "emails, relatórios, documentos, tarefas repetitivas, dados ou apoio a clientes";
+  }
+
+  return profile.examples.join(", ");
 }
 
 function pickVariant(options, seed = "") {
@@ -517,6 +591,7 @@ function markInternalDecision(type, details = {}) {
 }
 
 function nextGoalAfter(goal) {
+  if (goal === "area") return "problemas";
   if (goal === "problemas") return "visao_futuro";
   return "close";
 }
@@ -569,7 +644,18 @@ function polishAcceptedValue(goal, value) {
 }
 
 function acceptField(goal, value, state, raw = "") {
-  const cleanValue = polishAcceptedValue(goal, value) || "não especificado";
+  let cleanValue = (value || "").trim();
+
+  if (goal === "area") {
+    const detectedArea = ARENTIA_AREAS[cleanValue]
+      ? cleanValue
+      : detectArentiaArea(raw || value);
+
+    cleanValue = detectedArea || "não especificado";
+  } else {
+    cleanValue = polishAcceptedValue(goal, value) || "não especificado";
+  }
+
   state[goal] = cleanValue;
   state.attempts_per_goal[goal] = 0;
   state.clarifications_per_goal[goal] = 0;
@@ -612,9 +698,9 @@ function processUserTranscript(text) {
   if (nextAssistantStep === "greeting") {
     if (wantsToSkipSmallTalk(text)) {
       interviewState.warmup_done = true;
-      interviewState.current_goal = "problemas";
+      interviewState.current_goal = "area";
       markInternalDecision("quebra_gelo_skipped", { text: text || "<vazio>" });
-      sendAssistantResponse("problemas", text, { reason: "skip_small_talk" });
+      sendAssistantResponse("area", text, { reason: "skip_small_talk" });
       return;
     }
 
@@ -633,9 +719,9 @@ function processUserTranscript(text) {
   if (nextAssistantStep === SOCIAL_STEP) {
     if (wantsToSkipSmallTalk(text)) {
       interviewState.warmup_done = true;
-      interviewState.current_goal = "problemas";
+      interviewState.current_goal = "area";
       markInternalDecision("event_context_skipped", { text: text || "<vazio>" });
-      sendAssistantResponse("problemas", text, { reason: "skip_small_talk" });
+      sendAssistantResponse("area", text, { reason: "skip_small_talk" });
       return;
     }
 
@@ -655,12 +741,12 @@ function processUserTranscript(text) {
 
   if (nextAssistantStep === EVENT_EXPECTATION_STEP) {
     interviewState.warmup_done = true;
-    interviewState.current_goal = "problemas";
+    interviewState.current_goal = "area";
     markInternalDecision("quebra_gelo_done", {
       text: text || "<vazio>",
       skipped: wantsToSkipSmallTalk(text)
     });
-    sendAssistantResponse("problemas", text, {
+    sendAssistantResponse("area", text, {
       reason: wantsToSkipSmallTalk(text) ? "skip_small_talk" : "social_done"
     });
     return;
@@ -668,7 +754,7 @@ function processUserTranscript(text) {
 
   if (nextAssistantStep === "close") return;
 
-  if (INTERVIEW_GOALS.includes(interviewState.current_goal)) {
+  if (ASSESSABLE_GOALS.includes(interviewState.current_goal)) {
     sendAssessmentRequest(interviewState.current_goal, text);
     return;
   }
@@ -679,6 +765,15 @@ function processUserTranscript(text) {
 function processPendingTranscriptIfReady() {
   if (assistantResponseInProgress || pendingUserTranscripts.length === 0) return;
   const text = pendingUserTranscripts.shift();
+
+  if (!text || !text.trim()) {
+    markInternalDecision("ignored_empty_pending_transcript", { text: text || "<vazio>" });
+    if (pendingUserTranscripts.length > 0) {
+      processPendingTranscriptIfReady();
+    }
+    return;
+  }
+
   markInternalDecision("processed_pending_transcript", { text });
   processUserTranscript(text);
 }
@@ -694,6 +789,7 @@ function buildRecentContext() {
 function buildAssessmentPrompt(goal, userText) {
   const state = interviewState || createInterviewState();
   const fieldLabel = {
+    area: "área da Arentia em que a pessoa trabalha ou com que mais se identifica",
     problemas: "tarefa, processo ou problema concreto que a IA devia ajudar a resolver ou automatizar",
     visao_futuro: "visão de futuro sobre como a IA pode ajudar a Arentia"
   }[goal];
@@ -705,6 +801,7 @@ function buildAssessmentPrompt(goal, userText) {
     `Campo atual: ${goal} (${fieldLabel}).`,
     `Resposta da pessoa a avaliar: ${userText || "<vazio>"}`,
     "Campos já recolhidos:",
+    `area: ${state.area || "em falta"}`,
     `problemas: ${state.problemas || "em falta"}`,
     `visao_futuro: ${state.visao_futuro || "em falta"}`,
     "Histórico recente:",
@@ -714,8 +811,22 @@ function buildAssessmentPrompt(goal, userText) {
     "Não aceites confirmações como 'sim' como resposta útil.",
     "Não aceites perguntas da pessoa como resposta útil; usa answer_type question_back.",
     "Não aceites 'não sei', 'boa questão mas não sei' ou equivalentes como resposta útil.",
+    "Para area, identifica uma das áreas da Arentia: ti, primavera, phc, industria, id, comercial, gao ou administracao.",
+    "Para area, accepted só deve ser true quando a resposta indicar claramente a área da pessoa.",
+    "Para area, se a resposta for vaga como 'não sei', 'depende' ou 'qualquer uma', accepted=false.",
+    "Para area, se a pessoa disser 'Primavera', normaliza para 'primavera'.",
+    "Para area, se disser 'PHC', normaliza para 'phc'.",
+    "Para area, se disser 'I&D', 'desenvolvimento', 'software' ou 'programação', normaliza para 'id'.",
+    "Para area, se disser 'RH', 'marketing', 'serviços partilhados', 'SIG', 'qualidade', 'faturação' ou 'contabilidade', normaliza para 'gao'.",
+    "Para area, se disser 'servidores', 'redes', 'infraestrutura', 'segurança' ou 'suporte técnico', normaliza para 'ti'.",
+    "Para area, se disser 'produção', 'logística', 'stocks' ou 'chão de fábrica', normaliza para 'industria'.",
+    "Para area, se disser 'vendas', 'propostas', 'leads', 'oportunidades' ou 'clientes', normaliza para 'comercial'.",
+    "Para area, se disser 'administração', 'direção', 'CEO', 'liderança' ou 'estratégia', normaliza para 'administracao'.",
+    "Para area, o normalized_value deve ser apenas uma destas chaves: ti, primavera, phc, industria, id, comercial, gao, administracao.",
     "Para problemas, avalia se a resposta identifica um problema, tarefa ou processo que a IA poderia resolver ou automatizar.",
-    "Para visao_futuro, avalia se a resposta descreve uma expectativa para o futuro da IA na Arentia, mesmo que mencione o problema anterior.",
+    "Para visao_futuro, avalia se a resposta descreve como a IA poderia evoluir ou ajudar melhor no futuro, preferencialmente ligada ao problema, tarefa ou processo concreto já recolhido.",
+    "Para visao_futuro, valoriza respostas que continuem o tema anterior em vez de respostas genéricas sobre a empresa.",
+    "Se a resposta falar do mesmo problema anterior com uma melhoria futura clara, aceita.",
     "Se a resposta responder claramente a outro campo que não o atual, accepted=false, mas conserva a pista em normalized_value.",
     "Se a resposta for curta mas útil no contexto, como 'marcações' para problema, aceita.",
     "normalized_value deve ser uma síntese curta, limpa e útil para análise posterior; nunca uma transcrição literal quebrada.",
@@ -780,7 +891,7 @@ function fallbackAssessAnswer(goal, userText, state) {
 function applyAssessment(rawAssessment) {
   if (!interviewState) interviewState = createInterviewState();
 
-  const goal = INTERVIEW_GOALS.includes(rawAssessment?.goal)
+  const goal = ASSESSABLE_GOALS.includes(rawAssessment?.goal)
     ? rawAssessment.goal
     : interviewState.current_goal;
   const answerType = rawAssessment?.answer_type || "noise";
@@ -789,7 +900,13 @@ function applyAssessment(rawAssessment) {
   const userText = (rawAssessment?.userText || "").trim();
   const state = interviewState;
   if (!state.clarifications_per_goal) {
-    state.clarifications_per_goal = { problemas: 0, visao_futuro: 0 };
+    state.clarifications_per_goal = { area: 0, problemas: 0, visao_futuro: 0 };
+  }
+  if (!state.attempts_per_goal.area && state.attempts_per_goal.area !== 0) {
+    state.attempts_per_goal.area = 0;
+  }
+  if (!state.clarifications_per_goal.area && state.clarifications_per_goal.area !== 0) {
+    state.clarifications_per_goal.area = 0;
   }
 
   awaitingAssessment = false;
@@ -804,9 +921,16 @@ function applyAssessment(rawAssessment) {
 
   if (accepted && normalizedValue && normalizedValue !== "não especificado") {
     acceptField(goal, normalizedValue, state, userText);
-    const nextGoal = canFinishInterview(state)
-      ? "close"
-      : INTERVIEW_GOALS.find((item) => !state[item]) || nextGoalAfter(goal);
+    let nextGoal;
+
+    if (goal === "area") {
+      nextGoal = "problemas";
+    } else {
+      nextGoal = canFinishInterview(state)
+        ? "close"
+        : INTERVIEW_GOALS.find((item) => !state[item]) || nextGoalAfter(goal);
+    }
+
     state.current_goal = nextGoal;
     sendAssistantResponse(nextGoal === "close" ? "close" : nextGoal, userText, {
       reason: "accepted",
@@ -817,9 +941,11 @@ function applyAssessment(rawAssessment) {
 
   if (answerType === "skip") {
     setGoalAsUnspecified(goal, state);
-    const nextGoal = canFinishInterview(state)
-      ? "close"
-      : INTERVIEW_GOALS.find((item) => !state[item]) || nextGoalAfter(goal);
+    const nextGoal = goal === "area"
+      ? "problemas"
+      : canFinishInterview(state)
+        ? "close"
+        : INTERVIEW_GOALS.find((item) => !state[item]) || nextGoalAfter(goal);
     state.current_goal = nextGoal;
     sendAssistantResponse(nextGoal === "close" ? "close" : nextGoal, userText, {
       reason: "skip",
@@ -848,10 +974,23 @@ function applyAssessment(rawAssessment) {
     state.attempts_per_goal[goal] >= MAX_ATTEMPTS_PER_GOAL ||
     state.clarifications_per_goal[goal] >= MAX_ATTEMPTS_PER_GOAL
   ) {
-    setGoalAsUnspecified(goal, state);
-    const nextGoal = canFinishInterview(state)
-      ? "close"
-      : INTERVIEW_GOALS.find((item) => !state[item]) || nextGoalAfter(goal);
+    if (goal === "area") {
+      state.area = "não especificado";
+      state.attempts_per_goal.area = 0;
+      state.clarifications_per_goal.area = 0;
+      markInternalDecision("context_area_unspecified", {
+        goal,
+        text: userText || "<vazio>"
+      });
+    } else {
+      setGoalAsUnspecified(goal, state);
+    }
+
+    const nextGoal = goal === "area"
+      ? "problemas"
+      : canFinishInterview(state)
+        ? "close"
+        : INTERVIEW_GOALS.find((item) => !state[item]) || nextGoalAfter(goal);
     state.current_goal = nextGoal;
     sendAssistantResponse(nextGoal === "close" ? "close" : nextGoal, userText, {
       reason: "fallback_after_attempts",
@@ -877,24 +1016,25 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     ? `O utilizador chama-se ${currentUserName}.`
     : "Não sei o nome da pessoa.";
   const eventName = MIA_EVENT_NAME || "aConquista";
+  const spokenEventName = MIA_EVENT_SPOKEN_NAME || eventName;
   const hour = new Date().getHours();
   const dayGreeting = hour < 12 ? "Bom dia" : hour < 19 ? "Boa tarde" : "Boa noite";
   const greeting = isGroup
     ? pickVariant([
-        `${dayGreeting} a todos, sou a MIA. Têm um minuto para começarmos?`,
-        `Olá a todos, sou a MIA. Posso fazer-vos uma pergunta rápida?`,
-        `${dayGreeting}, sejam bem-vindos. Sou a MIA. Podemos começar?`
+        `${dayGreeting} a todos, sou a MIA. Antes de começarmos, está tudo bem convosco?`,
+        `Olá a todos, sou a MIA. Como é que estão por aí?`,
+        `${dayGreeting}, sejam bem-vindos. Sou a MIA. Está tudo bem convosco para começarmos com calma?`
       ], `${currentFaceCount}-grupo`)
     : hasName
       ? pickVariant([
-          `${dayGreeting}, ${currentUserName}. Sou a MIA. Tens um minuto para começarmos?`,
-          `Olá ${currentUserName}, sou a MIA. Posso fazer-te uma pergunta rápida?`,
-          `Olá ${currentUserName}! Sou a MIA. Podemos começar?`
+          `${dayGreeting}, ${currentUserName}. Sou a MIA. Antes de começarmos, está tudo bem contigo?`,
+          `Olá ${currentUserName}, sou a MIA. Como é que estás?`,
+          `Olá ${currentUserName}! Sou a MIA. Está tudo bem contigo para conversarmos um bocadinho?`
         ], currentUserName)
       : pickVariant([
-          `${dayGreeting}, sou a MIA. Tens um minuto para começarmos?`,
-          `Olá, sou a MIA. Posso fazer-te uma pergunta rápida?`,
-          "Olá! Sou a MIA. Podemos começar?"
+          `${dayGreeting}, sou a MIA. Antes de começarmos, está tudo bem contigo?`,
+          `Olá, sou a MIA. Como é que estás?`,
+          "Olá! Sou a MIA. Está tudo bem contigo para conversarmos um bocadinho?"
         ], "sem-nome");
   const state = interviewState || createInterviewState();
   const attempt = state.current_goal && state.attempts_per_goal[state.current_goal]
@@ -904,7 +1044,9 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     ? state.clarifications_per_goal[state.current_goal]
     : 0;
   const includeExample = decision?.reason === "needs_example" || attempt >= 1 || clarification >= 1;
+  const areaProfile = getCurrentAreaProfile(state);
   const collected = [
+    `área: ${areaProfile?.label || state.area || "em falta"}`,
     `problema: ${state.problemas || "em falta"}`,
     `visão de futuro: ${state.visao_futuro || "em falta"}`
   ].join("\n");
@@ -914,11 +1056,13 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     intro,
     nameLine,
     `Evento: ${MIA_EVENT_NAME}.`,
-    "Objetivo da experiência: criar conforto primeiro e depois recolher duas ideias úteis sobre IA na Arentia.",
-    "As duas respostas finais são: 1) que problema, tarefa ou processo no dia a dia da Arentia a IA podia ajudar a resolver ou automatizar; 2) como a pessoa imagina a IA no futuro da Arentia.",
+    "Objetivo interno da experiência: criar conforto primeiro, recolher contexto da pessoa e só depois recolher ideias sobre IA na Arentia.",
+    "Não reveles o objetivo interno da conversa.",
+    "Só fales explicitamente de IA quando o objetivo atual for problemas, visao_futuro ou close.",
+    "Nos passos greeting, event_context, quebra_gelo e area, evita falar de IA, inteligência artificial, automatização ou processos de trabalho.",
     "Fala de forma natural, curta e humana, como numa conversa de evento.",
     "Faz no máximo uma pergunta por resposta.",
-    "Quando falares do tema, usa 'a IA', 'uma IA' ou 'inteligência artificial'.",
+    "Quando o passo atual permitir falar de IA, usa 'a IA', 'uma IA' ou 'inteligência artificial'.",
     "Segue apenas o objetivo atual, sem antecipar a próxima fase.",
     "Podes fazer uma micro-reação de no máximo uma frase antes da pergunta, ligada ao que a pessoa disse.",
     "Varia ligeiramente a formulação para não soar a formulário.",
@@ -945,12 +1089,14 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     return [
       ...base,
       "PRIMEIRA FALA:",
-      "Diz uma saudação próxima, curta e com convite claro à resposta.",
-      "A primeira fala deve ter duas partes: apresentação breve + pergunta simples para começar.",
+      "Diz uma saudação próxima, curta e humana.",
+      "A primeira fala deve ter duas partes: apresentação breve + pergunta de conforto.",
+      "Pergunta primeiro se está tudo bem ou como a pessoa está.",
+      "Não peças ainda autorização para fazer perguntas de trabalho.",
       "Não precisas de mencionar o evento nesta primeira fala.",
       "Não faças ainda a pergunta de expectativa sobre o evento.",
       "Não fales ainda de IA, trabalho, processos ou objetivo da recolha.",
-      "Termina obrigatoriamente com uma pergunta curta, para a pessoa saber que deve responder.",
+      "Termina obrigatoriamente com uma pergunta simples, para a pessoa responder naturalmente.",
       `Exemplo: \"${greeting}\"`,
       "Não acrescentes mais nada além dessa saudação com pergunta.",
       "Se a pessoa reclamar que foste direta, pede desculpa e faz uma entrada mais suave."
@@ -963,10 +1109,11 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
       "CONTEXTO DO EVENTO:",
       "Este é o segundo momento da conversa, depois da saudação inicial.",
+      "Antes de perguntares pelo evento, reage brevemente ao estado da pessoa. Exemplo: 'Boa, ainda bem.' ou 'Ótimo, então vamos com calma.'",
       "Responde de forma curta, próxima e natural ao que a pessoa disse.",
-      `Pergunta primeiro, de forma leve, se a pessoa já tem uma ideia do que é o evento ${eventName}.`,
+      `Pergunta primeiro, de forma leve, se a pessoa já tem uma ideia do que é o evento ${spokenEventName}.`,
       "Não expliques já o evento, a menos que a pessoa peça ou diga que não sabe.",
-      `Termina com uma pergunta simples, por exemplo: "Já tens uma ideia do que é o evento ${eventName}, ou queres que te dê só uma ideia rápida?"`,
+      `Termina com uma pergunta simples, por exemplo: "Já tens uma ideia do que é o evento ${spokenEventName}, ou queres que te dê só uma ideia rápida?"`,
       "Evita soar a teste. Não perguntes de forma seca como 'Sabes o que é?'.",
       "Não recolhas ainda expectativas, respostas sobre IA, nem processos de trabalho."
     ].join("\n").trim();
@@ -979,17 +1126,18 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       "QUEBRA-GELO DE PRÉ-EVENTO:",
       "Este momento vem depois de perguntares se a pessoa sabe o que é o evento.",
       decision?.reason === "explain_event"
-        ? `A pessoa não parece saber bem o que é. Explica apenas numa frase curta: o evento ${eventName} é um evento interno da Arentia sobre pessoas, cultura e IA. Não dês programa, datas, objetivos detalhados nem explicações longas.`
-        : `A pessoa parece saber o que é o evento ${eventName}. Não expliques de novo.`,
+        ? `A pessoa não parece saber bem o que é. Explica apenas numa frase curta: o evento ${spokenEventName} é um momento interno da Arentia para juntar pessoas, partilhar ideias e olhar para o futuro da empresa. Não menciones IA nesta explicação.`
+        : `A pessoa parece saber o que é o evento ${spokenEventName}. Não expliques de novo.`,
       "Responde de forma curta, próxima e natural ao que a pessoa disse.",
       "Depois faz uma pergunta muito fácil de responder, com opções simples.",
-      `Usa "o evento ${eventName}" ou "este evento" em vez de "a aConquista".`,
+      `Usa "o evento ${spokenEventName}" ou "este evento" em vez de "a aConquista".`,
       "Pergunta principal recomendada:",
-      `- "Dos temas pessoas, cultura e IA, qual te chama mais a atenção?"`,
+      `- "Dentro do evento, o que te chama mais a atenção: pessoas, cultura, equipas ou futuro da empresa?"`,
       "Outras opções possíveis:",
-      `- "O que te puxa mais neste evento: pessoas, cultura ou IA?"`,
-      `- "Se tivesses de escolher um tema para ouvir mais, seria pessoas, cultura ou IA?"`,
+      `- "O que te puxa mais neste evento: conhecer ideias novas, ouvir pessoas ou perceber para onde a Arentia está a caminhar?"`,
+      `- "Se tivesses de escolher um tema para ouvir mais, seria pessoas, equipas ou futuro da empresa?"`,
       "Evita perguntas demasiado abertas como 'quais são as tuas expectativas?' ou 'o que achas do evento?'.",
+      "Não menciones IA neste passo, a não ser que a pessoa fale disso primeiro.",
       "Mantém tudo curto, natural e sem parecer formulário.",
       isGroup
         ? "Fala para o grupo e faz a pergunta no plural."
@@ -1002,11 +1150,42 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     ].join("\n").trim();
   }
 
-  if (step === "problemas" || step === "problem") {
+  if (step === "area") {
     return [
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
-      "OBJETIVO ATUAL: descobrir uma tarefa, problema ou processo concreto do dia a dia da Arentia que a IA podia ajudar a resolver ou automatizar.",
+      "OBJETIVO ATUAL: descobrir em que área da Arentia a pessoa trabalha ou com que área mais se identifica.",
+      decision?.reason === "skip_small_talk"
+        ? "A pessoa quis avançar. Respeita isso e pergunta diretamente pela área."
+        : "Faz uma transição natural a partir do quebra-gelo.",
+      "A pergunta deve parecer apenas contexto de conversa, não uma recolha técnica.",
+      "Não digas que vais adaptar exemplos.",
+      "Não digas que precisas da área para personalizar as próximas perguntas.",
+      "Não reveles o objetivo específico desta pergunta.",
+      "Pergunta apenas qual é a área da pessoa dentro da Arentia.",
+      "Não perguntes ainda por problemas, tarefas, processos ou visão de futuro.",
+      "Áreas possíveis: TI, Cegid Primavera, Cegid PHC, Indústria, I&D, Comercial, GAO, Administração e CEO.",
+      "Exemplo de formulação principal:",
+      "\"E tu estás mais ligado a que área aqui na Arentia?\"",
+      "Se a pessoa parecer hesitante, aí sim podes dar opções: \"TI, Primavera, PHC, Indústria, I&D, Comercial, GAO ou Administração.\"",
+      "Não listes sempre todas as áreas logo na primeira pergunta, a menos que seja necessário.",
+      "Também podes usar uma formulação mais natural:",
+      "\"Para eu te situar melhor: és de que área aqui na Arentia?\"",
+      "Faz só uma pergunta."
+    ].join("\n").trim();
+  }
+
+  if (step === "problemas" || step === "problem") {
+    const problemAreaProfile = getCurrentAreaProfile(state);
+    const problemAreaLine = problemAreaProfile
+      ? `Área identificada internamente: ${problemAreaProfile.label}. Usa exemplos ligados a esta área, mas não digas que estás a adaptar exemplos nem expliques porquê.`
+      : "Área não identificada. Usa exemplos gerais.";
+
+    return [
+      ...base,
+      `Última resposta do utilizador: ${userText || "sem resposta"}.`,
+      problemAreaLine,
+      "OBJETIVO ATUAL: descobrir primeiro uma tarefa, problema ou processo concreto do dia a dia da Arentia. Depois, se fizer sentido, enquadra como algo onde a IA poderia ajudar.",
       decision?.reason === "social_done"
         ? "A resposta anterior veio do quebra-gelo. Começa obrigatoriamente por reagir ao que a pessoa disse, de forma específica. Não uses uma reação genérica como 'Certo' ou 'Percebo'. Depois faz uma ponte suave para a primeira pergunta sobre IA no dia a dia."
         : decision?.reason === "skip_small_talk"
@@ -1014,8 +1193,9 @@ function buildResponsePrompt(step, userText = "", decision = null) {
           : decision?.reason === "fallback_after_attempts"
             ? "A pessoa teve dificuldade em responder ao tema anterior. Faz uma transição muito suave, sem dizer que falhou. Usa algo como: 'Sem problema, deixamos essa em aberto por agora.' Depois passa ao próximo tema com uma pergunta simples."
             : "Se a resposta anterior já trouxe contexto útil, reconhece-o numa frase curta antes de perguntar.",
-      "Formato recomendado quando vens do quebra-gelo: reação específica + ponte + pergunta.",
-      `Exemplo: 'Faz sentido, perceber melhor esse tema é uma boa entrada para o evento ${eventName}. Trazendo isso para o teu dia a dia na Arentia: que tarefa ou processo achas que a IA podia simplificar?'`,
+      "Formato recomendado: reação curta + ponte + pergunta.",
+      `Exemplo: 'Faz sentido. Trazendo isso para o teu dia a dia na Arentia: há alguma tarefa ou processo que te faça perder tempo ou que aches demasiado repetitivo?'`,
+      "Na primeira pergunta deste passo, não precisas de mencionar IA. Podes introduzir IA só depois de a pessoa indicar uma tarefa, problema ou processo.",
       "Faz a pergunta como continuação da conversa, não como nova secção de formulário.",
       "Evita começar diretamente por 'No teu dia a dia...'. Antes, usa uma ponte curta como 'pegando nisso', 'trazendo isso para a prática', ou 'ligando ao trabalho real'.",
       "Formula a pergunta com palavras tuas, sem soar a questionário.",
@@ -1023,7 +1203,10 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       isGroup
         ? "Fala para o grupo, mas pede uma ideia concreta."
         : "Fala diretamente com a pessoa e pede uma ideia concreta.",
-      "Podes dar 2 ou 3 exemplos simples se ajudar: emails, relatórios, documentos, tarefas repetitivas, dados ou apoio a clientes.",
+      `Se precisares de ajudar a pessoa a pensar, podes dar 2 ou 3 exemplos naturais: ${getAreaExamplesText(state)}.`,
+      "Se a área acabou de ser recolhida, não confirmes explicitamente a área. Não digas 'estás ligado a I&D', 'como és de PHC' ou parecido.",
+      "Não digas que os exemplos vêm da área da pessoa.",
+      "Não menciones a área recolhida. Usa apenas o contexto internamente para escolher exemplos naturais.",
       "Se a pessoa responder só com uma palavra mas ela fizer sentido no contexto, como 'marcações', aceita e avança.",
       "Mantém a resposta curta e faz só uma pergunta.",
       "Não perguntes ainda pela visão de futuro."
@@ -1031,19 +1214,30 @@ function buildResponsePrompt(step, userText = "", decision = null) {
   }
 
   if (step === "visao_futuro" || step === "future") {
+    const futureAreaProfile = getCurrentAreaProfile(state);
+    const futureAreaLine = futureAreaProfile
+      ? `Área identificada internamente: ${futureAreaProfile.label}. Mantém a conversa ligada ao contexto dessa área, sem mencionar explicitamente a área.`
+      : "Área não identificada. Mantém a pergunta ligada ao problema concreto recolhido.";
+  
     return [
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
-      "OBJETIVO ATUAL: perceber como a pessoa imagina a IA no futuro da Arentia.",
+      futureAreaLine,
+      "OBJETIVO ATUAL: perceber como a pessoa imagina a evolução futura da ajuda da IA, mas sempre ligada ao problema, tarefa ou processo concreto que acabou de ser recolhido.",
       decision?.reason === "fallback_after_attempts"
-        ? "A pessoa teve dificuldade em responder ao tema anterior. Faz uma transição suave, sem dizer que falhou. Usa algo como: 'Sem problema, deixamos essa em aberto por agora.' Depois passa à visão de futuro com uma pergunta simples."
-        : "Começa por confirmar em linguagem simples o problema que ficou registado.",
-      "Depois faz uma ponte para a visão de futuro.",
-      "Não passes para a próxima pergunta sem antes mostrar que entendeste a resposta anterior.",
-      "Formato recomendado: 'Fica claro: [problema normalizado]. E olhando mais para a frente, como imaginas que a IA podia ajudar a Arentia nas equipas, processos ou forma de trabalhar?'",
+        ? "A pessoa teve dificuldade em responder ao tema anterior. Faz uma transição suave, sem dizer que falhou. Usa algo como: 'Sem problema, deixamos essa em aberto por agora.' Depois faz uma pergunta simples sobre o futuro, mas ainda ligada ao dia a dia concreto da pessoa."
+        : "Começa por confirmar em linguagem simples o problema ou tarefa que ficou registado.",
+      "Depois pergunta como essa ajuda podia evoluir no futuro.",
+      "Não faças uma pergunta genérica sobre equipas, processos ou forma de trabalhar se já houver um problema concreto registado.",
+      "Não digas apenas 'como a IA podia ajudar a Arentia nas equipas, processos ou forma de trabalhar'. Isso é demasiado genérico.",
       "Usa a versão normalizada do problema, não a transcrição bruta.",
-      "Pergunta de forma aberta como a IA pode ajudar equipas, processos ou a forma de trabalhar daqui para a frente.",
-      "Varia a formulação e não repitas sempre o exemplo de 'daqui a uns anos'.",
+      "A pergunta deve continuar agarrada ao exemplo concreto da pessoa.",
+      "Formato recomendado: 'Fica claro: [problema normalizado]. E imaginando isso a funcionar melhor no futuro, como gostavas que a IA te ajudasse nessa parte?'",
+      "Outras formulações possíveis:",
+      "- 'Pegando nesse caso, como imaginavas uma IA a ajudar-te melhor nessa tarefa daqui para a frente?'",
+      "- 'Se essa ajuda estivesse mesmo bem feita no futuro, o que é que ela fazia por ti nessa situação?'",
+      "- 'Pensando nesse problema em concreto, como é que uma IA podia tornar isso mais simples no futuro?'",
+      "Só se não houver problema concreto registado é que podes perguntar de forma mais geral sobre a Arentia.",
       "Mantém a resposta curta e faz só uma pergunta.",
       "Não feches a conversa nesta fala."
     ].join("\n").trim();
@@ -1053,6 +1247,7 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     const goal = state.current_goal;
     const assessment = decision?.assessment || null;
     const goalLabel = {
+      area: "a área da Arentia em que a pessoa trabalha ou com que mais se identifica",
       problemas: "a tarefa, processo ou problema concreto que a IA devia ajudar a resolver ou automatizar",
       visao_futuro: "a visão sobre a IA no futuro da Arentia"
     }[goal] || "o detalhe em falta";
@@ -1063,7 +1258,8 @@ function buildResponsePrompt(step, userText = "", decision = null) {
 
     const exampleLine = includeExample
       ? {
-          problemas: "Dá exemplos curtos: emails, relatórios, dados em Excel, tarefas repetitivas, documentos ou apoio a clientes.",
+          area: "Dá as opções de forma curta: TI, Primavera, PHC, Indústria, I&D, Comercial, GAO ou Administração.",
+          problemas: `Dá exemplos curtos e naturais: ${getAreaExamplesText(state)}. Não digas que os exemplos vêm da área da pessoa.`,
           visao_futuro: "Dá exemplos curtos: IA mais integrada nas ferramentas, a apoiar equipas, a antecipar necessidades ou a simplificar processos."
         }[goal]
       : "Não dês exemplos ainda; apenas reformula de forma mais simples.";
@@ -1076,6 +1272,12 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       assessment?.clarifying_question ? `Pergunta sugerida: "${assessment.clarifying_question}"` : null,
       shortFragmentLine,
       exampleLine,
+      goal === "area"
+        ? "Se estiveres a clarificar a área, pergunta de forma natural, sem revelar que isso vai orientar a conversa."
+        : null,
+      goal === "area"
+        ? "Não digas que vais adaptar exemplos ou personalizar perguntas."
+        : null,
       "Não digas 'não foi específico o suficiente'.",
       "Faz parecer uma ajuda natural para chegar a uma resposta mais concreta.",
       "Termina sempre com uma pergunta concreta e fácil de responder.",
@@ -1095,11 +1297,12 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     "Todos os campos já foram preenchidos ou marcados como não especificado pelo frontend.",
     "Usa apenas os valores limpos nos campos recolhidos. Nunca repitas transcrições brutas ou frases quebradas da pessoa.",
     `Valores que serão guardados automaticamente pelo frontend:
+area: ${state.area || "não especificado"}
 problemas: ${state.problemas || "não especificado"}
 visao_futuro: ${state.visao_futuro || "não especificado"}`,
     "Não chames nenhuma função.",
     "Faz um fecho curto, caloroso e com mini-resumo do que ficou registado.",
-    "No fecho, resume só o problema e a visão de futuro. Não menciones o campo ambiente nem digas que ficou não especificado.",
+    "No fecho, resume só o problema e a visão de futuro. Não menciones o campo ambiente nem a área, a não ser que soe muito natural.",
     "Se algum valor vier com linguagem forte, suaviza no resumo: 'comandar processos' deve soar como 'coordenar processos'.",
     "Exemplo de tom: \"Fica registado, Diogo: IA a apoiar o envio de emails e, no futuro da Arentia, a simplificar processos para libertar tempo às equipas. Obrigado por deixares a tua marca.\"",
     "Não termines só com 'Obrigado, ficou registado'."
@@ -1158,6 +1361,7 @@ function completeInterviewFromState(reason = "state_complete") {
   markInternalDecision("auto_submit_after_close", { reason });
   completeInterview({
     ambiente: interviewState.ambiente || "não especificado",
+    area: interviewState.area || "não especificado",
     problemas: interviewState.problemas || "não especificado",
     visao_futuro: interviewState.visao_futuro || "não especificado"
   });
@@ -1183,6 +1387,7 @@ function completeInterview(args) {
   completed = true;
   const result = {
     ambiente: interviewState.ambiente || args.ambiente || "não especificado",
+    area: interviewState.area || args.area || "não especificado",
     problemas: interviewState.problemas || args.problemas || "não especificado",
     visao_futuro: interviewState.visao_futuro || args.visao_futuro || "não especificado",
     transcript: [...transcript],

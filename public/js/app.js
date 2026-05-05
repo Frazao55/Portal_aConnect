@@ -243,6 +243,7 @@ async function onInterviewComplete(result) {
     completed: true,
     responses: {
       ambiente: result.ambiente || "não especificado",
+      area: result.area || "não especificado",
       problemas: result.problemas,
       visao_futuro: result.visao_futuro,
       transcript: result.transcript || getTranscript()
