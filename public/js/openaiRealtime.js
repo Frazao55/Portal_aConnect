@@ -790,8 +790,8 @@ function buildAssessmentPrompt(goal, userText) {
   const state = interviewState || createInterviewState();
   const fieldLabel = {
     area: "área da Arentia em que a pessoa trabalha ou com que mais se identifica",
-    problemas: "tarefa, processo ou problema concreto que a IA devia ajudar a resolver ou automatizar",
-    visao_futuro: "visão de futuro sobre como a IA pode ajudar a Arentia"
+    problemas: "tarefa rotineira, repetitiva ou morosa do dia a dia que podia ter ajuda da IA",
+    visao_futuro: "forma como a pessoa vê a IA e o seu impacto no futuro da Arentia, da sua área ou da forma de trabalhar"
   }[goal];
 
   return [
@@ -823,10 +823,12 @@ function buildAssessmentPrompt(goal, userText) {
     "Para area, se disser 'vendas', 'propostas', 'leads', 'oportunidades' ou 'clientes', normaliza para 'comercial'.",
     "Para area, se disser 'administração', 'direção', 'CEO', 'liderança' ou 'estratégia', normaliza para 'administracao'.",
     "Para area, o normalized_value deve ser apenas uma destas chaves: ti, primavera, phc, industria, id, comercial, gao, administracao.",
-    "Para problemas, avalia se a resposta identifica um problema, tarefa ou processo que a IA poderia resolver ou automatizar.",
-    "Para visao_futuro, avalia se a resposta descreve como a IA poderia evoluir ou ajudar melhor no futuro, preferencialmente ligada ao problema, tarefa ou processo concreto já recolhido.",
-    "Para visao_futuro, valoriza respostas que continuem o tema anterior em vez de respostas genéricas sobre a empresa.",
-    "Se a resposta falar do mesmo problema anterior com uma melhoria futura clara, aceita.",
+    "Para problemas, avalia se a resposta identifica uma tarefa rotineira, repetitiva, morosa ou frequente do dia a dia em que a IA poderia ajudar.",
+    "Para problemas, aceita tarefas concretas mesmo que sejam simples, como emails, relatórios, tickets, propostas, documentação, análise de dados, marcações, follow-ups, suporte ou organização de informação.",
+    "Para problemas, não exijas que a pessoa use a palavra 'problema'. O foco é perceber que rotina podia ter ajuda da IA.",
+    "Para visao_futuro, avalia se a resposta descreve como a pessoa vê a IA e o seu impacto no futuro: na sua área, na Arentia, nas equipas, nos processos ou na forma de trabalhar.",
+    "Para visao_futuro, aceita respostas mais amplas sobre impacto, oportunidades, riscos, mudança de hábitos, produtividade, apoio às equipas ou transformação do trabalho.",
+    "Para visao_futuro, a resposta pode estar ligada à tarefa anterior, mas não precisa de ficar limitada a ela.",
     "Se a resposta responder claramente a outro campo que não o atual, accepted=false, mas conserva a pista em normalized_value.",
     "Se a resposta for curta mas útil no contexto, como 'marcações' para problema, aceita.",
     "normalized_value deve ser uma síntese curta, limpa e útil para análise posterior; nunca uma transcrição literal quebrada.",
@@ -1185,7 +1187,7 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
       problemAreaLine,
-      "OBJETIVO ATUAL: descobrir primeiro uma tarefa, problema ou processo concreto do dia a dia da Arentia. Depois, se fizer sentido, enquadra como algo onde a IA poderia ajudar.",
+      "OBJETIVO ATUAL: descobrir uma tarefa rotineira, repetitiva ou morosa do dia a dia da pessoa que podia ter ajuda da IA.",
       decision?.reason === "social_done"
         ? "A resposta anterior veio do quebra-gelo. Começa obrigatoriamente por reagir ao que a pessoa disse, de forma específica. Não uses uma reação genérica como 'Certo' ou 'Percebo'. Depois faz uma ponte suave para a primeira pergunta sobre IA no dia a dia."
         : decision?.reason === "skip_small_talk"
@@ -1194,20 +1196,20 @@ function buildResponsePrompt(step, userText = "", decision = null) {
             ? "A pessoa teve dificuldade em responder ao tema anterior. Faz uma transição muito suave, sem dizer que falhou. Usa algo como: 'Sem problema, deixamos essa em aberto por agora.' Depois passa ao próximo tema com uma pergunta simples."
             : "Se a resposta anterior já trouxe contexto útil, reconhece-o numa frase curta antes de perguntar.",
       "Formato recomendado: reação curta + ponte + pergunta.",
-      `Exemplo: 'Faz sentido. Trazendo isso para o teu dia a dia na Arentia: há alguma tarefa ou processo que te faça perder tempo ou que aches demasiado repetitivo?'`,
-      "Na primeira pergunta deste passo, não precisas de mencionar IA. Podes introduzir IA só depois de a pessoa indicar uma tarefa, problema ou processo.",
+      `Exemplo: 'Faz sentido. Trazendo isso para o teu dia a dia na Arentia: há alguma tarefa rotineira ou repetitiva em que achas que a IA podia ajudar?'`,
+      "Nesta pergunta, podes mencionar IA diretamente, porque este é um dos dois temas principais da experiência.",
       "Faz a pergunta como continuação da conversa, não como nova secção de formulário.",
       "Evita começar diretamente por 'No teu dia a dia...'. Antes, usa uma ponte curta como 'pegando nisso', 'trazendo isso para a prática', ou 'ligando ao trabalho real'.",
       "Formula a pergunta com palavras tuas, sem soar a questionário.",
-      "Pergunta por um problema, tarefa ou processo concreto do dia a dia onde a IA pudesse ajudar.",
+      "Pergunta por uma tarefa rotineira, repetitiva, morosa ou frequente do dia a dia em que a IA pudesse ajudar.",
       isGroup
         ? "Fala para o grupo, mas pede uma ideia concreta."
         : "Fala diretamente com a pessoa e pede uma ideia concreta.",
-      `Se precisares de ajudar a pessoa a pensar, podes dar 2 ou 3 exemplos naturais: ${getAreaExamplesText(state)}.`,
+      `Se precisares de ajudar a pessoa a pensar, podes dar 2 ou 3 exemplos naturais de tarefas rotineiras ou frequentes: ${getAreaExamplesText(state)}.`,
       "Se a área acabou de ser recolhida, não confirmes explicitamente a área. Não digas 'estás ligado a I&D', 'como és de PHC' ou parecido.",
       "Não digas que os exemplos vêm da área da pessoa.",
       "Não menciones a área recolhida. Usa apenas o contexto internamente para escolher exemplos naturais.",
-      "Se a pessoa responder só com uma palavra mas ela fizer sentido no contexto, como 'marcações', aceita e avança.",
+      "Se a pessoa responder só com uma palavra mas ela fizer sentido como tarefa ou rotina, como 'emails', 'marcações', 'relatórios', 'tickets' ou 'propostas', aceita e avança.",
       "Mantém a resposta curta e faz só uma pergunta.",
       "Não perguntes ainda pela visão de futuro."
     ].join("\n").trim();
@@ -1217,27 +1219,27 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     const futureAreaProfile = getCurrentAreaProfile(state);
     const futureAreaLine = futureAreaProfile
       ? `Área identificada internamente: ${futureAreaProfile.label}. Mantém a conversa ligada ao contexto dessa área, sem mencionar explicitamente a área.`
-      : "Área não identificada. Mantém a pergunta ligada ao problema concreto recolhido.";
+      : "Área não identificada. Mantém a pergunta aberta sobre o futuro da IA na Arentia ou na forma de trabalhar.";
   
     return [
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
       futureAreaLine,
-      "OBJETIVO ATUAL: perceber como a pessoa imagina a evolução futura da ajuda da IA, mas sempre ligada ao problema, tarefa ou processo concreto que acabou de ser recolhido.",
+      "OBJETIVO ATUAL: perceber como a pessoa vê a IA e o seu impacto no futuro da Arentia, da sua área ou da forma de trabalhar.",
       decision?.reason === "fallback_after_attempts"
-        ? "A pessoa teve dificuldade em responder ao tema anterior. Faz uma transição suave, sem dizer que falhou. Usa algo como: 'Sem problema, deixamos essa em aberto por agora.' Depois faz uma pergunta simples sobre o futuro, mas ainda ligada ao dia a dia concreto da pessoa."
-        : "Começa por confirmar em linguagem simples o problema ou tarefa que ficou registado.",
-      "Depois pergunta como essa ajuda podia evoluir no futuro.",
-      "Não faças uma pergunta genérica sobre equipas, processos ou forma de trabalhar se já houver um problema concreto registado.",
-      "Não digas apenas 'como a IA podia ajudar a Arentia nas equipas, processos ou forma de trabalhar'. Isso é demasiado genérico.",
-      "Usa a versão normalizada do problema, não a transcrição bruta.",
-      "A pergunta deve continuar agarrada ao exemplo concreto da pessoa.",
-      "Formato recomendado: 'Fica claro: [problema normalizado]. E imaginando isso a funcionar melhor no futuro, como gostavas que a IA te ajudasse nessa parte?'",
+        ? "A pessoa teve dificuldade em responder ao tema anterior. Faz uma transição suave, sem dizer que falhou. Usa algo como: 'Sem problema, deixamos essa em aberto por agora.' Depois faz uma pergunta simples e aberta sobre o futuro da IA."
+        : "Começa por confirmar em linguagem simples a tarefa que ficou registada, se existir.",
+      "Depois pergunta de forma aberta como a pessoa vê a IA e o seu impacto no futuro.",
+      "A pergunta pode fazer ponte com a tarefa anterior, mas deve abrir para uma visão mais ampla.",
+      "Não limites a resposta apenas à tarefa anterior.",
+      "Usa a tarefa recolhida como ponto de partida, não como prisão.",
+      "Usa a versão normalizada da tarefa, não a transcrição bruta.",
+      "Formato recomendado: 'Fica claro: [tarefa normalizada]. E olhando agora mais para o futuro: como vês a IA a impactar a tua área ou a forma de trabalhar na Arentia?'",
       "Outras formulações possíveis:",
-      "- 'Pegando nesse caso, como imaginavas uma IA a ajudar-te melhor nessa tarefa daqui para a frente?'",
-      "- 'Se essa ajuda estivesse mesmo bem feita no futuro, o que é que ela fazia por ti nessa situação?'",
-      "- 'Pensando nesse problema em concreto, como é que uma IA podia tornar isso mais simples no futuro?'",
-      "Só se não houver problema concreto registado é que podes perguntar de forma mais geral sobre a Arentia.",
+      "- 'Olhando para o futuro, que impacto achas que a IA pode ter na tua área?'",
+      "- 'Como imaginas a IA a mudar a forma de trabalhar na Arentia nos próximos tempos?'",
+      "- 'Para ti, a IA no futuro vai ser mais uma ajuda no dia a dia, uma mudança grande na forma de trabalhar, ou outra coisa?'",
+      "- 'Pegando nessa tarefa, e abrindo um pouco mais: como vês a IA a influenciar o trabalho daqui para a frente?'",
       "Mantém a resposta curta e faz só uma pergunta.",
       "Não feches a conversa nesta fala."
     ].join("\n").trim();
@@ -1248,8 +1250,8 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     const assessment = decision?.assessment || null;
     const goalLabel = {
       area: "a área da Arentia em que a pessoa trabalha ou com que mais se identifica",
-      problemas: "a tarefa, processo ou problema concreto que a IA devia ajudar a resolver ou automatizar",
-      visao_futuro: "a visão sobre a IA no futuro da Arentia"
+      problemas: "a tarefa rotineira, repetitiva ou morosa do dia a dia que podia ter ajuda da IA",
+      visao_futuro: "a forma como a pessoa vê a IA e o seu impacto no futuro"
     }[goal] || "o detalhe em falta";
 
     const shortFragmentLine = decision?.reason === "short_context_fragment"
@@ -1259,8 +1261,8 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     const exampleLine = includeExample
       ? {
           area: "Dá as opções de forma curta: TI, Primavera, PHC, Indústria, I&D, Comercial, GAO ou Administração.",
-          problemas: `Dá exemplos curtos e naturais: ${getAreaExamplesText(state)}. Não digas que os exemplos vêm da área da pessoa.`,
-          visao_futuro: "Dá exemplos curtos: IA mais integrada nas ferramentas, a apoiar equipas, a antecipar necessidades ou a simplificar processos."
+          problemas: `Dá exemplos curtos e naturais de tarefas rotineiras ou frequentes: ${getAreaExamplesText(state)}. Não digas que os exemplos vêm da área da pessoa.`,
+          visao_futuro: "Dá exemplos curtos: impacto na produtividade, apoio às equipas, mudança de hábitos, simplificação de processos ou novas formas de trabalhar."
         }[goal]
       : "Não dês exemplos ainda; apenas reformula de forma mais simples.";
 
