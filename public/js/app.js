@@ -82,7 +82,7 @@ async function onStartConversation() {
 
   state = "analyzing";
   setPreviewAnalyzing(true);
-  log("A iniciar reconhecimento facial...", "system");
+  log("[app] A iniciar reconhecimento facial...", "system");
 
   try {
     startDetection(
@@ -90,7 +90,7 @@ async function onStartConversation() {
       () => { /* sem feedback visual */ }
     );
   } catch (err) {
-    log(`Erro: ${err.message}`, "error");
+    log(`[app] Erro ao iniciar detecção: ${err.message}`, "error");
     stopCamera();
     state = "preview";
     setPreviewAnalyzing(false);
@@ -106,9 +106,11 @@ function onFaceRecognized(match) {
   currentFaceCount = getFaceCount();
   stopDetection();
 
+  log(`[app] onFaceRecognized match=${match ? match.label : "null"} faceCount=${currentFaceCount}`, "system");
+
   if (!match) {
     if (currentDescriptor && currentPhoto) {
-      log("Face detetada, não reconhecida. Pedir nome.", "system");
+      log("[app] Face detetada, não reconhecida. Pedir nome.", "system");
       setRegisterPhoto(currentPhoto);
       clearRegisterName();
       setPreviewAnalyzing(false);
@@ -116,7 +118,7 @@ function onFaceRecognized(match) {
       return;
     }
 
-    log("Face detetada sem dados suficientes.", "error");
+    log("[app] Face detetada sem dados suficientes.", "error");
     startDetection(
       (nextMatch) => onFaceRecognized(nextMatch),
       () => {}
@@ -129,11 +131,11 @@ function onFaceRecognized(match) {
     name: firstName(match.label)
   };
 
-  log(`Utilizador reconhecido: ${match.label} (dist=${match.distance.toFixed(3)})`, "system");
-  
+  log(`[app] Utilizador reconhecido: ${match.label} (dist=${match.distance.toFixed(3)})`, "system");
+
   // Transição suave: esconder overlay do preview
   hidePreviewOverlay();
-  
+
   // Pequeno delay para a transição visual antes de iniciar a conversa
   setTimeout(() => {
     onStartInterview();
@@ -183,7 +185,7 @@ function onCancelRegister() {
 // ── Conversa ────────────────────────────────────────────────────
 async function onStartInterview() {
   if (!currentUser) {
-    log("Nenhum utilizador identificado.", "error");
+    log("[app] Nenhum utilizador identificado.", "error");
     return;
   }
 
@@ -194,9 +196,10 @@ async function onStartInterview() {
   setState("interview");
   setMiaPresence("connecting");
   interviewStartTime = Date.now();
-  log(`A Mia vai falar com ${currentUser.name}...`, "system");
+  log(`[app] A Mia vai falar com ${currentUser.name}...`, "system");
 
   try {
+    log("[app] A chamar startInterview...", "system");
     await startInterview(
       currentUser.name,
       currentFaceCount,
@@ -204,20 +207,25 @@ async function onStartInterview() {
       (err) => onInterviewError(err)
     );
   } catch (err) {
-    log(`Erro ao iniciar conversa: ${err.message}`, "error");
+    log(`[app] Erro ao iniciar conversa: ${err.message}`, "error");
+    if (err.stack) log(`[app] Stack: ${err.stack}`, "error");
+    showPreviewOverlay();
     setState("preview");
+    startPreview();
   }
 }
 
 function onStopInterview() {
   stopInterview();
-  log("Conversa interrompida.", "system");
+  log("[app] Conversa interrompida.", "system");
   currentUser = null;
   currentDescriptor = null;
   currentPhoto = null;
   currentFaceCount = 0;
+  setPreviewAnalyzing(false);
   showPreviewOverlay();
   setState("preview");
+  startPreview();
 }
 
 async function onInterviewComplete(result) {
@@ -265,13 +273,16 @@ async function onInterviewComplete(result) {
 }
 
 function onInterviewError(err) {
-  log(`Conversa falhou: ${err.message}`, "error");
+  log(`[app] Conversa falhou: ${err.message}`, "error");
+  if (err.stack) log(`[app] Stack: ${err.stack}`, "error");
   currentUser = null;
   currentDescriptor = null;
   currentPhoto = null;
   currentFaceCount = 0;
+  setPreviewAnalyzing(false);
   showPreviewOverlay();
   setState("preview");
+  startPreview();
 }
 
 // ── Reiniciar ───────────────────────────────────────────────────

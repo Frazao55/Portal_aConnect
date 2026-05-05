@@ -76,6 +76,7 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
     log("[realtime] a pedir token efémero", "system");
 
     const tokenRes = await fetch("/token");
+    log(`[realtime] tokenRes status=${tokenRes.status}`, "system");
     const tokenData = await tokenRes.json();
 
     if (!tokenRes.ok) {
@@ -83,7 +84,10 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
     }
 
     const ephemeralKey = tokenData.client_secret;
+    log("[realtime] token obtido", "system");
+
     const iceConfigRes = await fetch("/ice-config");
+    log(`[realtime] iceConfigRes status=${iceConfigRes.status}`, "system");
     const iceConfig = iceConfigRes.ok
       ? await iceConfigRes.json()
       : {
@@ -96,7 +100,7 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
       log("[webrtc] TURN nao configurado", "error");
     }
 
-    log("[realtime] token obtido, a criar PeerConnection", "system");
+    log("[realtime] a criar PeerConnection", "system");
 
     pc = new RTCPeerConnection({
       iceServers: iceConfig.iceServers,
@@ -144,10 +148,12 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
       }
     };
 
+    log("[realtime] a pedir microfone...", "system");
     localStream = await navigator.mediaDevices.getUserMedia({
       audio: true,
       video: false
     });
+    log(`[realtime] microfone obtido, tracks=${localStream.getAudioTracks().length}`, "system");
     localStream.getAudioTracks().forEach((track) => pc.addTrack(track, localStream));
 
     dc = pc.createDataChannel("oai-events");
@@ -167,9 +173,12 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
       }
     };
 
+    log("[realtime] a criar SDP offer...", "system");
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
+    log("[realtime] SDP offer criada e localDescription definida", "system");
 
+    log("[realtime] a enviar SDP para OpenAI...", "system");
     const sdpResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
       method: "POST",
       body: offer.sdp,
@@ -179,13 +188,17 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
       }
     });
 
+    log(`[realtime] SDP response status=${sdpResponse.status}`, "system");
     if (!sdpResponse.ok) {
       const text = await sdpResponse.text();
+      log(`[realtime] SDP erro: ${text}`, "error");
       throw new Error(`Erro SDP: ${text}`);
     }
 
     const answerSdp = await sdpResponse.text();
+    log(`[realtime] SDP answer recebida, length=${answerSdp.length}`, "system");
     await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
+    log("[realtime] remoteDescription definida", "system");
 
     setMiaPresence("thinking");
     log("[realtime] conversa iniciada; aguarda a saudação da Mia", "system");
@@ -202,7 +215,8 @@ export async function startInterview(userName, faceCount, onComplete, onError) {
       }
     }, 1000);
   } catch (err) {
-    log(`Erro Realtime: ${err.message}`, "error");
+    log(`[realtime] Erro no startInterview: ${err.message}`, "error");
+    if (err.stack) log(`[realtime] Stack: ${err.stack}`, "error");
     cleanup();
     if (onErrorCallback) onErrorCallback(err);
   }

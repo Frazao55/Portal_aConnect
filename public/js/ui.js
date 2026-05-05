@@ -100,7 +100,8 @@ export function clearRegisterName() {
 }
 
 export function log(message, role = "system") {
-  if (!debugEnabled) return;
+  // Sempre mostrar erros, mesmo sem debug
+  if (!debugEnabled && role !== "error") return;
 
   const time = new Date().toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const entry = document.createElement("div");
