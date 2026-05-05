@@ -28,7 +28,7 @@ let pendingAssessmentArgs = null;
 let pendingAssessmentInput = null;
 
 const MAX_DURATION_SECONDS = 300;
-const MAX_ATTEMPTS_PER_GOAL = 2;
+const MAX_ATTEMPTS_PER_GOAL = 5;
 const RESPONSE_DONE_AUDIO_FALLBACK_MS = 30000;
 const ICE_DISCONNECTED_GRACE_MS = 5000;
 const INTERVIEW_GOALS = ["problemas", "visao_futuro"];
