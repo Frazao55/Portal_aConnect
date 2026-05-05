@@ -181,16 +181,17 @@ h1::after {
 
 .camera-pip {
   position: absolute;
-  /* Posicionada no canto inferior esquerdo para não estorvar */
-  bottom: 40px;
-  left: 40px;
+  /* Preview compacto para caber no palco 9:16 sem tapar a Mia nem os controlos. */
+  bottom: clamp(18px, 4vh, 32px);
+  left: clamp(18px, 4vw, 32px);
   transform: scaleX(-1); /* espelhar e manter do lado esquerdo */
-  width: 240px; /* Maior para uma TV */
-  height: 320px; /* Proporção 3:4 (retrato) */
+  width: clamp(150px, 34vw, 210px);
+  aspect-ratio: 16 / 9;
+  height: auto;
   object-fit: cover;
-  border-radius: 24px; /* Mais arredondado */
-  border: 3px solid rgba(255, 255, 255, 0.8);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border-radius: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
   background: #111;
   z-index: 3;
 }

@@ -1,3 +1,5 @@
+import { buildCameraConstraints } from "./cameraConfig.js";
+
 const MODEL_URL = "/models";
 const DETECTION_INTERVAL_MS = 350;
 const REQUIRED_STABLE_FRAMES = 3;
@@ -64,7 +66,7 @@ async function loadModels() {
 
 async function startCamera() {
   stream = await navigator.mediaDevices.getUserMedia({
-    video: { width: 640, height: 480, facingMode: "user" },
+    video: buildCameraConstraints(),
     audio: false
   });
 

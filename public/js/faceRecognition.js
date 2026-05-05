@@ -1,6 +1,7 @@
 // faceRecognition.js — Deteção e reconhecimento facial (silencioso)
 
 import { log, getVideoElement } from "./ui.js";
+import { buildCameraConstraints } from "./cameraConfig.js";
 
 const MODEL_URL = "/models";
 
@@ -40,7 +41,7 @@ export async function loadRegisteredFaces() {
 export async function startCamera() {
   video = getVideoElement();
   cameraStream = await navigator.mediaDevices.getUserMedia({
-    video: { width: 640, height: 480, facingMode: "user" },
+    video: buildCameraConstraints(),
     audio: false
   });
   video.srcObject = cameraStream;

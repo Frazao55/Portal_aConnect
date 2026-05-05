@@ -32,7 +32,8 @@ const MAX_ATTEMPTS_PER_GOAL = 2;
 const RESPONSE_DONE_AUDIO_FALLBACK_MS = 30000;
 const ICE_DISCONNECTED_GRACE_MS = 5000;
 const INTERVIEW_GOALS = ["problemas", "visao_futuro"];
-const SOCIAL_STEP = "quebra_gelo";
+const SOCIAL_STEP = "event_context";
+const EVENT_EXPECTATION_STEP = "quebra_gelo";
 const NON_PENALIZING_ANSWER_TYPES = new Set(["confirmation_only", "question_back", "smalltalk", "skip"]);
 const PENALIZING_ANSWER_TYPES = new Set(["dont_know", "noise"]);
 const DEBUG_REALTIME = new URLSearchParams(window.location.search).get("debug") === "1";
@@ -443,6 +444,48 @@ function wantsToSkipSmallTalk(text) {
   ]);
 }
 
+function getEventAwareness(text) {
+  const normalized = normalizeText(text);
+
+  if (!normalized) return "unknown";
+
+  if (hasAnyWord(normalized, [
+    "nao sei",
+    "nao conheco",
+    "nem por isso",
+    "nunca ouvi",
+    "nunca ouvi falar",
+    "o que e",
+    "explica",
+    "podes explicar"
+  ])) {
+    return "unknown";
+  }
+
+  if (hasAnyWord(normalized, [
+    "mais ou menos",
+    "por alto",
+    "tenho uma ideia",
+    "ja ouvi",
+    "ja ouvi falar",
+    "ouvi falar"
+  ])) {
+    return "partial";
+  }
+
+  if (hasAnyWord(normalized, [
+    "sim",
+    "sei",
+    "claro",
+    "conheco",
+    "ja sei"
+  ])) {
+    return "known";
+  }
+
+  return "partial";
+}
+
 function isVagueAnswer(text, goal) {
   const normalized = normalizeText(text);
   const words = wordCount(text);
@@ -560,6 +603,10 @@ function processUserTranscript(text) {
       sendAssistantResponse(SOCIAL_STEP, "", { reason: "empty_transcription" });
       return;
     }
+    if (nextAssistantStep === EVENT_EXPECTATION_STEP) {
+      sendAssistantResponse(EVENT_EXPECTATION_STEP, "", { reason: "empty_transcription" });
+      return;
+    }
   }
 
   if (nextAssistantStep === "greeting") {
@@ -584,6 +631,29 @@ function processUserTranscript(text) {
   }
 
   if (nextAssistantStep === SOCIAL_STEP) {
+    if (wantsToSkipSmallTalk(text)) {
+      interviewState.warmup_done = true;
+      interviewState.current_goal = "problemas";
+      markInternalDecision("event_context_skipped", { text: text || "<vazio>" });
+      sendAssistantResponse("problemas", text, { reason: "skip_small_talk" });
+      return;
+    }
+
+    const eventAwareness = getEventAwareness(text);
+
+    interviewState.current_goal = EVENT_EXPECTATION_STEP;
+    markInternalDecision("event_context_done", {
+      text: text || "<vazio>",
+      eventAwareness
+    });
+    sendAssistantResponse(EVENT_EXPECTATION_STEP, text, {
+      reason: eventAwareness === "known" ? "event_known" : "explain_event",
+      eventAwareness
+    });
+    return;
+  }
+
+  if (nextAssistantStep === EVENT_EXPECTATION_STEP) {
     interviewState.warmup_done = true;
     interviewState.current_goal = "problemas";
     markInternalDecision("quebra_gelo_done", {
@@ -806,24 +876,25 @@ function buildResponsePrompt(step, userText = "", decision = null) {
   const nameLine = hasName
     ? `O utilizador chama-se ${currentUserName}.`
     : "Não sei o nome da pessoa.";
+  const eventName = MIA_EVENT_NAME || "aConquista";
   const hour = new Date().getHours();
   const dayGreeting = hour < 12 ? "Bom dia" : hour < 19 ? "Boa tarde" : "Boa noite";
   const greeting = isGroup
     ? pickVariant([
-        `${dayGreeting} a todos, sou a MIA. Podemos fazer um aquecimento rápido para a aConquista?`,
-        `Olá a todos, sou a MIA. Estão prontos para uma pergunta rápida antes da aConquista?`,
-        `${dayGreeting}, sejam bem-vindos. Sou a MIA. Posso começar com uma pergunta simples?`
+        `${dayGreeting} a todos, sou a MIA. Têm um minuto para começarmos?`,
+        `Olá a todos, sou a MIA. Posso fazer-vos uma pergunta rápida?`,
+        `${dayGreeting}, sejam bem-vindos. Sou a MIA. Podemos começar?`
       ], `${currentFaceCount}-grupo`)
     : hasName
       ? pickVariant([
-          `${dayGreeting}, ${currentUserName}. Sou a MIA. Podemos fazer um aquecimento rápido para a aConquista?`,
-          `Olá ${currentUserName}, sou a MIA. Posso fazer-te uma pergunta rápida antes da aConquista?`,
-          `Olá ${currentUserName}! Sou a MIA. Tens um minuto para começarmos?`
+          `${dayGreeting}, ${currentUserName}. Sou a MIA. Tens um minuto para começarmos?`,
+          `Olá ${currentUserName}, sou a MIA. Posso fazer-te uma pergunta rápida?`,
+          `Olá ${currentUserName}! Sou a MIA. Podemos começar?`
         ], currentUserName)
       : pickVariant([
-          `${dayGreeting}, sou a MIA. Podemos fazer um aquecimento rápido para a aConquista?`,
-          `Olá, sou a MIA. Posso fazer-te uma pergunta rápida antes da aConquista?`,
-          "Olá! Sou a MIA. Tens um minuto para começarmos?"
+          `${dayGreeting}, sou a MIA. Tens um minuto para começarmos?`,
+          `Olá, sou a MIA. Posso fazer-te uma pergunta rápida?`,
+          "Olá! Sou a MIA. Podemos começar?"
         ], "sem-nome");
   const state = interviewState || createInterviewState();
   const attempt = state.current_goal && state.attempts_per_goal[state.current_goal]
@@ -851,6 +922,10 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     "Segue apenas o objetivo atual, sem antecipar a próxima fase.",
     "Podes fazer uma micro-reação de no máximo uma frase antes da pergunta, ligada ao que a pessoa disse.",
     "Varia ligeiramente a formulação para não soar a formulário.",
+    "A conversa deve ter continuidade: liga sempre a tua fala ao que a pessoa acabou de dizer antes de mudares de tema.",
+    "Antes do fecho, termina sempre com uma pergunta clara ou um convite claro à resposta.",
+    "Evita falas que pareçam soltas, finais ou sem próximo passo.",
+    "Não termines apenas com uma apresentação, agradecimento ou comentário; dá sempre uma entrada para a pessoa responder.",
     "Dados recolhidos até agora:",
     collected
   ];
@@ -872,7 +947,7 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       "PRIMEIRA FALA:",
       "Diz uma saudação próxima, curta e com convite claro à resposta.",
       "A primeira fala deve ter duas partes: apresentação breve + pergunta simples para começar.",
-      "Podes mencionar a aConquista apenas como contexto de aquecimento.",
+      "Não precisas de mencionar o evento nesta primeira fala.",
       "Não faças ainda a pergunta de expectativa sobre o evento.",
       "Não fales ainda de IA, trabalho, processos ou objetivo da recolha.",
       "Termina obrigatoriamente com uma pergunta curta, para a pessoa saber que deve responder.",
@@ -886,20 +961,42 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     return [
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
-      "QUEBRA-GELO DE PRÉ-EVENTO:",
+      "CONTEXTO DO EVENTO:",
       "Este é o segundo momento da conversa, depois da saudação inicial.",
-      "Esta fase é só acolhimento antes da aConquista. Ainda não recolhas respostas sobre IA nem sobre processos de trabalho.",
       "Responde de forma curta, próxima e natural ao que a pessoa disse.",
-      "Depois faz uma única pergunta leve sobre a expectativa da pessoa para a aConquista.",
+      `Pergunta primeiro, de forma leve, se a pessoa já tem uma ideia do que é o evento ${eventName}.`,
+      "Não expliques já o evento, a menos que a pessoa peça ou diga que não sabe.",
+      `Termina com uma pergunta simples, por exemplo: "Já tens uma ideia do que é o evento ${eventName}, ou queres que te dê só uma ideia rápida?"`,
+      "Evita soar a teste. Não perguntes de forma seca como 'Sabes o que é?'.",
+      "Não recolhas ainda expectativas, respostas sobre IA, nem processos de trabalho."
+    ].join("\n").trim();
+  }
+
+  if (step === EVENT_EXPECTATION_STEP) {
+    return [
+      ...base,
+      `Última resposta do utilizador: ${userText || "sem resposta"}.`,
+      "QUEBRA-GELO DE PRÉ-EVENTO:",
+      "Este momento vem depois de perguntares se a pessoa sabe o que é o evento.",
+      decision?.reason === "explain_event"
+        ? `A pessoa não parece saber bem o que é. Explica apenas numa frase curta: o evento ${eventName} é um evento interno da Arentia sobre pessoas, cultura e IA. Não dês programa, datas, objetivos detalhados nem explicações longas.`
+        : `A pessoa parece saber o que é o evento ${eventName}. Não expliques de novo.`,
+      "Responde de forma curta, próxima e natural ao que a pessoa disse.",
+      "Depois faz uma pergunta muito fácil de responder, com opções simples.",
+      `Usa "o evento ${eventName}" ou "este evento" em vez de "a aConquista".`,
+      "Pergunta principal recomendada:",
+      `- "Dos temas pessoas, cultura e IA, qual te chama mais a atenção?"`,
+      "Outras opções possíveis:",
+      `- "O que te puxa mais neste evento: pessoas, cultura ou IA?"`,
+      `- "Se tivesses de escolher um tema para ouvir mais, seria pessoas, cultura ou IA?"`,
+      "Evita perguntas demasiado abertas como 'quais são as tuas expectativas?' ou 'o que achas do evento?'.",
+      "Mantém tudo curto, natural e sem parecer formulário.",
       isGroup
-        ? "Fala para o grupo. Pergunta algo como: que expectativa têm para a aConquista, que tema gostavam de ver explorado, ou o que gostavam de levar convosco no fim."
+        ? "Fala para o grupo e faz a pergunta no plural."
         : hasName
-          ? `Fala diretamente com ${currentUserName}. Pergunta algo como: que expectativa tens para a aConquista, que tema gostavas de ver explorado, ou o que gostavas de levar contigo no fim.`
-          : "Pergunta algo como: que expectativa tens para a aConquista, que tema gostavas de ver explorado, ou o que gostavas de levar contigo no fim.",
-      "Evita perguntas sobre 'hoje', porque a experiência pode acontecer antes do dia da aConquista.",
-      "Evita soar demasiado animada ou forçada. Não exageres no entusiasmo.",
-      "Evita expressões informais como 'Boa' no início da fala; prefere 'Certo', 'Percebo', 'Obrigado' ou uma reação curta ao conteúdo.",
-      "Não uses sempre a palavra 'curioso'; varia entre expectativa, interesse, tema, utilidade ou surpresa.",
+          ? `Fala diretamente com ${currentUserName}, mas mantém a pergunta simples e oral.`
+          : "Mantém a pergunta simples e oral.",
+      "Não recolhas ainda respostas sobre processos de trabalho.",
       "Se a pessoa estiver sem vontade de conversa fiada, aceita com naturalidade e passa ao assunto.",
       "Não expliques ainda o objetivo da experiência."
     ].join("\n").trim();
@@ -911,10 +1008,16 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
       "OBJETIVO ATUAL: descobrir uma tarefa, problema ou processo concreto do dia a dia da Arentia que a IA podia ajudar a resolver ou automatizar.",
       decision?.reason === "social_done"
-        ? "A resposta anterior veio do quebra-gelo sobre o evento. Reage primeiro em uma frase curta e genuína à expectativa da pessoa. Depois faz uma ponte suave: 'ligando isto ao tema da IA', 'trazendo isso para o dia a dia', ou equivalente. Não pareças estar a despachar."
+        ? "A resposta anterior veio do quebra-gelo. Começa obrigatoriamente por reagir ao que a pessoa disse, de forma específica. Não uses uma reação genérica como 'Certo' ou 'Percebo'. Depois faz uma ponte suave para a primeira pergunta sobre IA no dia a dia."
         : decision?.reason === "skip_small_talk"
-          ? "A pessoa quis avançar. Respeita isso com uma frase curta e vai diretamente à primeira pergunta principal."
-          : "Se a resposta anterior já trouxe contexto útil, reconhece-o numa frase curta antes de perguntar.",
+          ? "A pessoa quis avançar. Começa com uma frase de reconhecimento, como 'Claro, vamos diretos ao ponto.' Depois faz a pergunta principal."
+          : decision?.reason === "fallback_after_attempts"
+            ? "A pessoa teve dificuldade em responder ao tema anterior. Faz uma transição muito suave, sem dizer que falhou. Usa algo como: 'Sem problema, deixamos essa em aberto por agora.' Depois passa ao próximo tema com uma pergunta simples."
+            : "Se a resposta anterior já trouxe contexto útil, reconhece-o numa frase curta antes de perguntar.",
+      "Formato recomendado quando vens do quebra-gelo: reação específica + ponte + pergunta.",
+      `Exemplo: 'Faz sentido, perceber melhor esse tema é uma boa entrada para o evento ${eventName}. Trazendo isso para o teu dia a dia na Arentia: que tarefa ou processo achas que a IA podia simplificar?'`,
+      "Faz a pergunta como continuação da conversa, não como nova secção de formulário.",
+      "Evita começar diretamente por 'No teu dia a dia...'. Antes, usa uma ponte curta como 'pegando nisso', 'trazendo isso para a prática', ou 'ligando ao trabalho real'.",
       "Formula a pergunta com palavras tuas, sem soar a questionário.",
       "Pergunta por um problema, tarefa ou processo concreto do dia a dia onde a IA pudesse ajudar.",
       isGroup
@@ -932,7 +1035,12 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
       "OBJETIVO ATUAL: perceber como a pessoa imagina a IA no futuro da Arentia.",
-      "Faz uma transição curta: reage ao problema registado e abre a pergunta para uma visão mais ampla.",
+      decision?.reason === "fallback_after_attempts"
+        ? "A pessoa teve dificuldade em responder ao tema anterior. Faz uma transição suave, sem dizer que falhou. Usa algo como: 'Sem problema, deixamos essa em aberto por agora.' Depois passa à visão de futuro com uma pergunta simples."
+        : "Começa por confirmar em linguagem simples o problema que ficou registado.",
+      "Depois faz uma ponte para a visão de futuro.",
+      "Não passes para a próxima pergunta sem antes mostrar que entendeste a resposta anterior.",
+      "Formato recomendado: 'Fica claro: [problema normalizado]. E olhando mais para a frente, como imaginas que a IA podia ajudar a Arentia nas equipas, processos ou forma de trabalhar?'",
       "Usa a versão normalizada do problema, não a transcrição bruta.",
       "Pergunta de forma aberta como a IA pode ajudar equipas, processos ou a forma de trabalhar daqui para a frente.",
       "Varia a formulação e não repitas sempre o exemplo de 'daqui a uns anos'.",
@@ -964,10 +1072,14 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
       `OBJETIVO ATUAL: CLARIFICAR ${goalLabel}.`,
-      assessment ? `Classificação semântica: ${assessment.answer_type}.` : "A resposta anterior não foi específica o suficiente para avançar.",
+      assessment ? `Classificação semântica: ${assessment.answer_type}.` : "A resposta anterior ainda precisa de um pouco mais de detalhe, mas não digas isso de forma técnica.",
       assessment?.clarifying_question ? `Pergunta sugerida: "${assessment.clarifying_question}"` : null,
       shortFragmentLine,
       exampleLine,
+      "Não digas 'não foi específico o suficiente'.",
+      "Faz parecer uma ajuda natural para chegar a uma resposta mais concreta.",
+      "Termina sempre com uma pergunta concreta e fácil de responder.",
+      "Se possível, oferece duas opções para facilitar a resposta.",
       "Evita soar a interrogatório. Se já houver uma pista útil, confirma a pista e faz uma pergunta muito simples.",
       "Se a resposta foi só confirmação, pergunta qual é a tarefa ou momento concreto sem dizer que a resposta foi insuficiente.",
       "Se a pessoa devolveu uma pergunta, esclarece em meia frase e volta a pedir um exemplo.",
@@ -989,7 +1101,7 @@ visao_futuro: ${state.visao_futuro || "não especificado"}`,
     "Faz um fecho curto, caloroso e com mini-resumo do que ficou registado.",
     "No fecho, resume só o problema e a visão de futuro. Não menciones o campo ambiente nem digas que ficou não especificado.",
     "Se algum valor vier com linguagem forte, suaviza no resumo: 'comandar processos' deve soar como 'coordenar processos'.",
-    "Exemplo de tom: \"Obrigado, Diogo. Fica registado: IA a apoiar o envio de emails e, no futuro da Arentia, a coordenar processos e automatizar tarefas repetitivas para libertar as equipas. Obrigado por deixares a tua marca.\"",
+    "Exemplo de tom: \"Fica registado, Diogo: IA a apoiar o envio de emails e, no futuro da Arentia, a simplificar processos para libertar tempo às equipas. Obrigado por deixares a tua marca.\"",
     "Não termines só com 'Obrigado, ficou registado'."
   ].join("\n").trim();
 }

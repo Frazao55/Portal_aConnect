@@ -43,6 +43,28 @@ Depois abrir:
 http://localhost:3000
 ```
 
+## Câmara
+
+Por defeito a app usa a câmara frontal/predefinida do browser. Para forçar uma câmara externa, edita:
+
+```js
+public/js/cameraConfig.js
+```
+
+e coloca o `deviceId` em `PREFERRED_CAMERA_DEVICE_ID`.
+
+Também podes testar sem editar código abrindo:
+
+```text
+http://localhost:3000?cameraDeviceId=DEVICE_ID_DA_CAMERA
+```
+
+Para listar os `deviceId` disponíveis, abre:
+
+```text
+http://localhost:3000/camera-test.html
+```
+
 ## Dados locais
 
 A pasta `data/` guarda rostos, descritores e entrevistas geradas em runtime. Estes ficheiros nao devem ser enviados para Git porque podem conter dados pessoais.

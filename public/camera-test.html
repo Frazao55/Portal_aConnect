@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Teste de Câmaras</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 24px;
+      background: #f5f5f5;
+      color: #111;
+    }
+
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 12px 18px;
+      background: #e5252a;
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    pre {
+      margin-top: 18px;
+      padding: 16px;
+      background: #111;
+      color: #fff;
+      border-radius: 8px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <h1>Teste de Câmaras</h1>
+  <button type="button" onclick="listarCamaras()">Listar câmaras</button>
+  <pre id="output">Carrega no botão e aceita a permissão da câmara.</pre>
+
+  <script>
+    async function listarCamaras() {
+      const output = document.getElementById("output");
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras = devices.filter((device) => device.kind === "videoinput");
+
+        output.textContent = cameras
+          .map((camera, index) => (
+            `Câmara ${index + 1}\nNome: ${camera.label || "(sem nome)"}\ndeviceId: ${camera.deviceId}\n`
+          ))
+          .join("\n") || "Não foram encontradas câmaras.";
+
+        stream.getTracks().forEach((track) => track.stop());
+      } catch (error) {
+        output.textContent = "Erro ao aceder às câmaras: " + error.message;
+      }
+    }
+  </script>
+</body>
+</html>
