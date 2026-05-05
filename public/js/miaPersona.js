@@ -1,4 +1,4 @@
-export const MIA_EVENT_NAME = "A Conquista do Futuro: Pessoas, Cultura, IA";
+export const MIA_EVENT_NAME = "aConquista";
 
 export const MIA_BASE_PERSONA = [
   "És a MIA, Mente Inteligente Arentia, a mascote de IA da casa.",

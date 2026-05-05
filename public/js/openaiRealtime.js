@@ -676,7 +676,7 @@ function fallbackAssessAnswer(goal, userText, state) {
       normalized_value: "não especificado",
       needs_clarification: true,
       clarifying_question: exactConfirmation.has(normalized)
-        ? "Boa. Qual é a primeira coisa que te vem à cabeça?"
+        ? "Certo. Qual é a primeira coisa que te vem à cabeça?"
         : "Não apanhei bem. Dizes-me de outra forma?",
       confidence: 0.35
     };
@@ -806,23 +806,24 @@ function buildResponsePrompt(step, userText = "", decision = null) {
   const nameLine = hasName
     ? `O utilizador chama-se ${currentUserName}.`
     : "Não sei o nome da pessoa.";
+  const hour = new Date().getHours();
+  const dayGreeting = hour < 12 ? "Bom dia" : hour < 19 ? "Boa tarde" : "Boa noite";
   const greeting = isGroup
     ? pickVariant([
-        "Olá a todos! Sou a MIA. Vamos conquistar o futuro?",
-        "Boa, sejam bem-vindos. Sou a MIA.",
-        "Olá! Sou a MIA. Que bom ter-vos por cá."
+        `${dayGreeting} a todos, sou a MIA. Podemos fazer um aquecimento rápido para a aConquista?`,
+        `Olá a todos, sou a MIA. Estão prontos para uma pergunta rápida antes da aConquista?`,
+        `${dayGreeting}, sejam bem-vindos. Sou a MIA. Posso começar com uma pergunta simples?`
       ], `${currentFaceCount}-grupo`)
     : hasName
       ? pickVariant([
-          `Olá ${currentUserName}! Sou a MIA. Vamos conquistar o futuro?`,
-          `Olá ${currentUserName}! Que bom ver-te por cá. Sou a MIA.`,
-          `Boa, ${currentUserName}! Bem-vindo. Sou a MIA.`,
-          `Ora bem, ${currentUserName}. Sou a MIA. Vamos a isto?`
+          `${dayGreeting}, ${currentUserName}. Sou a MIA. Podemos fazer um aquecimento rápido para a aConquista?`,
+          `Olá ${currentUserName}, sou a MIA. Posso fazer-te uma pergunta rápida antes da aConquista?`,
+          `Olá ${currentUserName}! Sou a MIA. Tens um minuto para começarmos?`
         ], currentUserName)
       : pickVariant([
-          "Olá! Sou a MIA. Ainda não te apanhei o nome, mas já cá estamos.",
-          "Olá! Sou a MIA, prazer. Vamos começar com calma.",
-          "Boa, bem-vindo. Sou a MIA."
+          `${dayGreeting}, sou a MIA. Podemos fazer um aquecimento rápido para a aConquista?`,
+          `Olá, sou a MIA. Posso fazer-te uma pergunta rápida antes da aConquista?`,
+          "Olá! Sou a MIA. Tens um minuto para começarmos?"
         ], "sem-nome");
   const state = interviewState || createInterviewState();
   const attempt = state.current_goal && state.attempts_per_goal[state.current_goal]
@@ -858,20 +859,26 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     if (decision?.reason === "empty_transcription") {
       return [
         ...base,
-        "A pessoa ainda não respondeu.",
-        "Repete uma saudação curta, sem pressionar.",
-        "Faz uma única pergunta simples para confirmar que pode começar."
+        "A pessoa ainda não respondeu ou o microfone não apanhou bem.",
+        "Não repitas exatamente a mesma frase.",
+        "Faz uma pergunta curta e tranquila para confirmar se a pessoa está pronta.",
+        "Exemplos: \"Estás aí comigo?\", \"Podemos começar?\", \"Queres que avance?\"",
+        "Não fales ainda de IA, trabalho ou processos."
       ].join("\n").trim();
     }
 
     return [
       ...base,
       "PRIMEIRA FALA:",
-      "Diz uma saudação próxima e curta.",
-      "Não faças perguntas sobre IA, trabalho ou objetivo. Se a frase de exemplo tiver uma pergunta retórica, não acrescentes outra.",
+      "Diz uma saudação próxima, curta e com convite claro à resposta.",
+      "A primeira fala deve ter duas partes: apresentação breve + pergunta simples para começar.",
+      "Podes mencionar a aConquista apenas como contexto de aquecimento.",
+      "Não faças ainda a pergunta de expectativa sobre o evento.",
+      "Não fales ainda de IA, trabalho, processos ou objetivo da recolha.",
+      "Termina obrigatoriamente com uma pergunta curta, para a pessoa saber que deve responder.",
       `Exemplo: \"${greeting}\"`,
-      "Não acrescentes mais nada nesta primeira fala.",
-      "Se a pessoa reclamar que foste direto, pede desculpa e volta a uma saudação curta."
+      "Não acrescentes mais nada além dessa saudação com pergunta.",
+      "Se a pessoa reclamar que foste direta, pede desculpa e faz uma entrada mais suave."
     ].join("\n").trim();
   }
 
@@ -879,17 +886,21 @@ function buildResponsePrompt(step, userText = "", decision = null) {
     return [
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
-      "QUEBRA-GELO:",
-      "Esta fase é só acolhimento. Ainda não recolhas dados sobre IA nem sobre trabalho.",
-      "Responde de forma curta e natural ao que a pessoa disse.",
-      "Depois faz uma única pergunta leve e humana, adaptada ao momento.",
+      "QUEBRA-GELO DE PRÉ-EVENTO:",
+      "Este é o segundo momento da conversa, depois da saudação inicial.",
+      "Esta fase é só acolhimento antes da aConquista. Ainda não recolhas respostas sobre IA nem sobre processos de trabalho.",
+      "Responde de forma curta, próxima e natural ao que a pessoa disse.",
+      "Depois faz uma única pergunta leve sobre a expectativa da pessoa para a aConquista.",
       isGroup
-        ? "Possíveis temas: como chegaram hoje, que energia trazem, o que esperam do evento ou que palavra descreve o dia."
+        ? "Fala para o grupo. Pergunta algo como: que expectativa têm para a aConquista, que tema gostavam de ver explorado, ou o que gostavam de levar convosco no fim."
         : hasName
-          ? `Possíveis temas: como chegaste hoje, que energia trazes, o que esperas do evento ou que palavra descreve o teu dia, ${currentUserName}.`
-          : "Possíveis temas: como chegaste hoje, que energia trazes, o que esperas do evento ou que palavra descreve o teu dia.",
-      "Escolhe uma formulação tua. Não uses sempre a pergunta do ânimo.",
-      "Se a pessoa estiver sem vontade de conversa fiada, diz algo como: \"Boa, vamos diretos ao assunto.\"",
+          ? `Fala diretamente com ${currentUserName}. Pergunta algo como: que expectativa tens para a aConquista, que tema gostavas de ver explorado, ou o que gostavas de levar contigo no fim.`
+          : "Pergunta algo como: que expectativa tens para a aConquista, que tema gostavas de ver explorado, ou o que gostavas de levar contigo no fim.",
+      "Evita perguntas sobre 'hoje', porque a experiência pode acontecer antes do dia da aConquista.",
+      "Evita soar demasiado animada ou forçada. Não exageres no entusiasmo.",
+      "Evita expressões informais como 'Boa' no início da fala; prefere 'Certo', 'Percebo', 'Obrigado' ou uma reação curta ao conteúdo.",
+      "Não uses sempre a palavra 'curioso'; varia entre expectativa, interesse, tema, utilidade ou surpresa.",
+      "Se a pessoa estiver sem vontade de conversa fiada, aceita com naturalidade e passa ao assunto.",
       "Não expliques ainda o objetivo da experiência."
     ].join("\n").trim();
   }
@@ -899,11 +910,13 @@ function buildResponsePrompt(step, userText = "", decision = null) {
       ...base,
       `Última resposta do utilizador: ${userText || "sem resposta"}.`,
       "OBJETIVO ATUAL: descobrir uma tarefa, problema ou processo concreto do dia a dia da Arentia que a IA podia ajudar a resolver ou automatizar.",
-      decision?.reason === "social_done" || decision?.reason === "skip_small_talk"
-        ? "Faz uma transição curta e natural do quebra-gelo para a primeira pergunta principal. Se a pessoa trouxe um tema lateral, não alimentes esse tema."
-        : "Se a resposta anterior já trouxe contexto útil, reconhece-o numa frase curta antes de perguntar.",
+      decision?.reason === "social_done"
+        ? "A resposta anterior veio do quebra-gelo sobre o evento. Reage primeiro em uma frase curta e genuína à expectativa da pessoa. Depois faz uma ponte suave: 'ligando isto ao tema da IA', 'trazendo isso para o dia a dia', ou equivalente. Não pareças estar a despachar."
+        : decision?.reason === "skip_small_talk"
+          ? "A pessoa quis avançar. Respeita isso com uma frase curta e vai diretamente à primeira pergunta principal."
+          : "Se a resposta anterior já trouxe contexto útil, reconhece-o numa frase curta antes de perguntar.",
       "Formula a pergunta com palavras tuas, sem soar a questionário.",
-      "Pergunta de forma independente por um problema, tarefa ou processo concreto.",
+      "Pergunta por um problema, tarefa ou processo concreto do dia a dia onde a IA pudesse ajudar.",
       isGroup
         ? "Fala para o grupo, mas pede uma ideia concreta."
         : "Fala diretamente com a pessoa e pede uma ideia concreta.",
@@ -976,7 +989,7 @@ visao_futuro: ${state.visao_futuro || "não especificado"}`,
     "Faz um fecho curto, caloroso e com mini-resumo do que ficou registado.",
     "No fecho, resume só o problema e a visão de futuro. Não menciones o campo ambiente nem digas que ficou não especificado.",
     "Se algum valor vier com linguagem forte, suaviza no resumo: 'comandar processos' deve soar como 'coordenar processos'.",
-    "Exemplo de tom: \"Boa, Diogo. Fica registado: IA a apoiar o envio de emails e, no futuro da Arentia, a coordenar processos e automatizar tarefas repetitivas para libertar as equipas. Obrigado por deixares a tua marca.\"",
+    "Exemplo de tom: \"Obrigado, Diogo. Fica registado: IA a apoiar o envio de emails e, no futuro da Arentia, a coordenar processos e automatizar tarefas repetitivas para libertar as equipas. Obrigado por deixares a tua marca.\"",
     "Não termines só com 'Obrigado, ficou registado'."
   ].join("\n").trim();
 }
